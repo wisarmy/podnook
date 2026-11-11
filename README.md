@@ -43,6 +43,9 @@ nsh test         # headless 测试
 nsh package --target macos   # 打包为 ad-hoc 签名的 .app
 ```
 
+> ⚠️ NSH 的 debug 构建产物很大：首次完整构建 `target/` 约 15 GB（多套 feature 的依赖各编译一份）。
+> 磁盘紧张时先 `cargo clean`。日常迭代用增量构建，不会再涨这么多。
+
 ## 数据与权限
 
 - 数据目录：`~/Library/Application Support/com.podnook.app/`
