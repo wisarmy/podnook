@@ -13,6 +13,8 @@ pub fn shell() -> impl IntoElement {
         .flex_1()
         .bg(theme::bg())
         .text_color(theme::fg())
+        .rounded(px(14.0))
+        .overflow_hidden()
         .child(header())
         .child(view().flex_row().flex_1().child(sidebar()).child(preview()))
         .child(footer())
@@ -20,6 +22,7 @@ pub fn shell() -> impl IntoElement {
 
 fn header() -> impl IntoElement {
     view()
+        .window_drag(true)
         .flex_row()
         .items_center()
         .gap_3()
