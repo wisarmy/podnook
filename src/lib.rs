@@ -101,6 +101,8 @@ fn open_panel_once() {
 pub fn show_panel() {
     #[cfg(target_os = "macos")]
     crate::paste::remember_frontmost();
+    // 同一时间只显示 Podnook 的一个窗口：呼出剪贴板时收起设置。
+    hide_settings();
     PANEL.with(|panel| match panel.borrow().as_ref() {
         Some(window) => {
             window.focus();
@@ -118,6 +120,17 @@ pub fn hide_panel() {
     PANEL.with(|panel| match panel.borrow().as_ref() {
         Some(window) => window.hide(),
         None => main_window().hide(),
+    });
+}
+
+/// 收起设置窗口（保留窗口，下次打开时恢复位置和状态）。
+pub fn hide_settings() {
+    SETTINGS_WINDOW.with(|slot| {
+        if let Some(window) = slot.borrow().as_ref() {
+            if window.state().is_some_and(|state| state.visible) {
+                window.hide();
+            }
+        }
     });
 }
 
@@ -191,11 +204,13 @@ pub fn register_hotkey_with(
     true
 }
 
-/// 打开（或聚焦）设置窗口。
+/// 打开（或聚焦）设置窗口。设置是浮层窗口：始终浮在其他 App 之上，
+/// 且呼出设置前先收起剪贴板面板，保证同一时间只有一个 Podnook 窗口。
 pub fn open_settings() {
     if !matches!(os(), Os::MacOs) {
         return;
     }
+    hide_panel();
     if let Some(window) = SETTINGS_WINDOW.with(|slot| slot.borrow().as_ref().cloned()) {
         if window.state().is_some() {
             window.focus();
@@ -204,15 +219,14 @@ pub fn open_settings() {
     }
 
     let mut attributes = WindowAttributes::default();
-    attributes.activate = Some(false);
     attributes.focusable = Some(true);
     attributes.resizable = Some(false);
-    attributes.minimizable = Some(false);
-    attributes.maximizable = Some(false);
+    attributes.close_on_escape = Some(true);
+    attributes.level = Some(WindowLevel::Floating);
 
     let window = panel_window()
         .id("settings")
-        .kind(WindowKind::Normal)
+        .kind(WindowKind::Panel)
         .title("Podnook 设置")
         .default_size(size(px(560.0), px(680.0)))
         .attributes(attributes)
