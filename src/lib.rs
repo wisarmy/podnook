@@ -160,7 +160,10 @@ fn setup_system() {
                 MenuItem::new("打开 Podnook").on_select(show_panel),
                 MenuItem::new("设置…").on_select(open_settings),
                 #[cfg(target_os = "macos")]
-                MenuItem::new("辅助功能设置").on_select(crate::paste::open_accessibility_settings),
+                MenuItem::new("辅助功能设置").on_select(|| {
+                    hide_settings();
+                    crate::paste::open_accessibility_settings();
+                }),
                 MenuItem::separator(),
                 MenuItem::new("退出").on_select(quit),
             ]),

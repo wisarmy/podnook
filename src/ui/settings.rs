@@ -192,9 +192,12 @@ pub fn settings() -> impl IntoElement {
                 })
         }))
         .child(choice("请求权限", || false, || {
+            // 系统设置会盖在浮层下面；先收起自己的设置窗口。
+            crate::hide_settings();
             crate::paste::request_trust();
         }))
         .child(choice("打开系统设置", || false, || {
+            crate::hide_settings();
             crate::paste::open_accessibility_settings()
         }));
 
