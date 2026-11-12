@@ -15,9 +15,31 @@ use nsh_base::input;
 use nsh_core::keymap::When;
 use nsh_core::prelude::*;
 use podnook_core::db::Store;
-use podnook_core::{Clip, ClipKind};
+use podnook_core::{hash_text, Clip, ClipKind};
 
 use crate::theme;
+
+thread_local! {
+    /// 搜索框的 ref：面板每次呼出时把键盘焦点放进去。
+    static SEARCH: std::cell::RefCell<Option<ElementRef>> = const { std::cell::RefCell::new(None) };
+    /// 面板的界面状态，用于呼出时重置搜索与选中项。
+    static STATE: std::cell::RefCell<Option<State>> = const { std::cell::RefCell::new(None) };
+}
+
+/// 面板每次呼出：清空搜索、选中第一条、聚焦搜索框。
+pub fn prepare_for_show() {
+    STATE.with(|slot| {
+        if let Some(state) = slot.borrow().as_ref() {
+            state.query.set(String::new());
+            state.selected.set(None);
+        }
+    });
+    SEARCH.with(|search| {
+        if let Some(search) = search.borrow().as_ref() {
+            search.focus();
+        }
+    });
+}
 
 #[derive(Clone)]
 struct State {
@@ -26,6 +48,7 @@ struct State {
     filter: Signal<Option<ClipKind>>,
     selected: Signal<Option<i64>>,
     flash: Signal<Option<String>>,
+    search: ElementRef,
     rows: Memo<Vec<Row>>,
 }
 
@@ -43,14 +66,18 @@ pub fn shell() -> impl IntoElement {
     let selected = signal(None::<i64>);
     let flash = signal(None::<String>);
     let rows = computed(move || build_rows(&clips.get(), &query.get(), filter.get()));
+    let search = element_ref();
+    SEARCH.with(|slot| *slot.borrow_mut() = Some(search));
     let state = State {
         clips,
         query,
         filter,
         selected,
         flash,
+        search,
         rows,
     };
+    STATE.with(|slot| *slot.borrow_mut() = Some(state.clone()));
 
     let store = crate::history::init();
     if let Some(store) = &store {
@@ -227,7 +254,10 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     on_key_with("up", always(), move |_| move_selection(&s, -1));
     let s = state.clone();
     let db = store.clone();
-    on_key_with("enter", always(), move |_| copy_selected(&s, db.as_deref()));
+    on_key_with("enter", always(), move |_| activate_selected(&s, db.as_deref(), true));
+    let s = state.clone();
+    let db = store.clone();
+    on_key_with("mod+enter", always(), move |_| activate_selected(&s, db.as_deref(), false));
     let s = state.clone();
     let db = store.clone();
     on_key_with("mod+p", always(), move |_| toggle_pin(&s, db.as_deref()));
@@ -238,6 +268,8 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     on_key("escape", move |_| {
         if !s.query.get().is_empty() {
             s.query.set(String::new());
+        } else {
+            crate::hide_panel();
         }
     });
 }
@@ -255,13 +287,10 @@ fn move_selection(state: &State, delta: isize) {
     state.selected.set(Some(ids[next]));
 }
 
-fn copy_selected(state: &State, store: Option<&Store>) {
+fn activate_selected(state: &State, store: Option<&Store>, paste: bool) {
     let Some(clip) = selected_clip(state) else {
         return;
     };
-    if let Some(store) = store {
-        store.mark_self_write(clip.hash.clone());
-    }
     let ok = match clip.kind {
         ClipKind::Text | ClipKind::Link => match &clip.content {
             Some(text) => {
@@ -295,9 +324,39 @@ fn copy_selected(state: &State, store: Option<&Store>) {
             }
         }
     };
-    if ok {
-        flash(state, "已复制");
+    if !ok {
+        return;
     }
+
+    // 写回剪贴板的可能是截断后的文本；自身写入的指纹要按写进去的内容算。
+    let written_hash = match clip.kind {
+        ClipKind::Text | ClipKind::Link => clip
+            .content
+            .as_deref()
+            .map(hash_text)
+            .unwrap_or_else(|| clip.hash.clone()),
+        _ => clip.hash.clone(),
+    };
+    if let Some(store) = store {
+        store.mark_self_write(written_hash);
+    }
+
+    if paste {
+        #[cfg(target_os = "macos")]
+        {
+            if crate::paste::is_trusted() {
+                crate::hide_panel();
+                crate::paste::paste_after_hide();
+            } else {
+                crate::paste::prompt_trust_once();
+                flash(state, "已复制 · 开启辅助功能后可自动粘贴");
+            }
+            return;
+        }
+    }
+
+    crate::hide_panel();
+    flash(state, "已复制");
 }
 
 fn toggle_pin(state: &State, store: Option<&Store>) {
@@ -352,6 +411,7 @@ fn header(state: State) -> impl IntoElement {
 
 fn search_box(state: State) -> impl IntoElement {
     let query = state.query;
+    let search = state.search;
     view()
         .flex_1()
         .flex_row()
@@ -371,6 +431,7 @@ fn search_box(state: State) -> impl IntoElement {
         .child(
             input()
                 .flex_1()
+                .element_ref(&search)
                 .value(query)
                 .on_change(move |value: &str| query.set(value.to_string()))
                 .placeholder("搜索剪贴板历史…")
@@ -702,7 +763,7 @@ fn footer_inner(state: State) -> impl IntoElement {
                 .text_color(theme::primary()),
         ),
         None => right
-            .child(hint("复制", key_label("enter")))
+            .child(hint("粘贴", key_label("enter")))
             .child(hint("固定", key_label("mod+p")))
             .child(hint("删除", key_label("backspace"))),
     };

@@ -6,6 +6,9 @@
   "rust": ".",
   "root": "App",
   "appearance": "system",
+  "macos": {
+    "activationPolicy": "accessory"
+  },
   "window": {
     "title": "Podnook",
     "defaultSize": {
@@ -18,6 +21,10 @@
     },
     "frame": "none",
     "transparent": true,
-    "shadow": true
+    "shadow": true,
+    "level": "floating",
+    "closeOnPress": false,
+    "activate": true,
+    "focusable": true
   }
 }
