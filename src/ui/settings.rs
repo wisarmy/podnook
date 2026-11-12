@@ -191,8 +191,8 @@ pub fn settings() -> impl IntoElement {
                     theme::muted_fg()
                 })
         }))
-        .child(choice("刷新", || false, move || {
-            trusted.set(crate::paste::is_trusted());
+        .child(choice("请求权限", || false, || {
+            crate::paste::request_trust();
         }))
         .child(choice("打开系统设置", || false, || {
             crate::paste::open_accessibility_settings()
@@ -360,7 +360,7 @@ pub fn settings() -> impl IntoElement {
         .flex_col()
         .child(setting_row("辅助功能", permission_row))
         .child(view().px_4().pb_3().child(
-            text("若系统设置已开启但这里仍显示未授权：完全退出 App 后重新打开；重新打包会改变 ad-hoc 签名，需要移除旧的辅助功能条目再添加。")
+            text("首次使用点「请求权限」，在系统设置里打开开关即可。之后用同一签名更新 App，不需要重新授权。")
                 .text_size(px(11.0))
                 .text_color(theme::muted_fg()),
         ));

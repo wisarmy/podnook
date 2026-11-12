@@ -27,11 +27,8 @@ pub fn is_trusted() -> bool {
     unsafe { AXIsProcessTrusted() }
 }
 
-/// 请求一次辅助功能权限（系统异步弹窗，只在本进程第一次需要时调用）。
-pub fn prompt_trust_once() {
-    if PROMPTED.swap(true, Ordering::Relaxed) || is_trusted() {
-        return;
-    }
+/// 请求辅助功能权限：系统会把本 App 加进「辅助功能」列表并打开设置。
+pub fn request_trust() {
     let key = NSString::from_str("AXTrustedCheckOptionPrompt");
     let value = NSNumber::new_bool(true);
     let dict: Retained<NSDictionary<NSString, NSNumber>> =
@@ -41,6 +38,14 @@ pub fn prompt_trust_once() {
     unsafe {
         AXIsProcessTrustedWithOptions(Some(cf));
     }
+}
+
+/// 请求一次辅助功能权限（系统异步弹窗，只在本进程第一次需要时调用）。
+pub fn prompt_trust_once() {
+    if PROMPTED.swap(true, Ordering::Relaxed) || is_trusted() {
+        return;
+    }
+    request_trust();
 }
 
 /// 打开系统设置里的「辅助功能」面板。
