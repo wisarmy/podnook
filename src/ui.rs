@@ -268,15 +268,9 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     let s = state.clone();
     let db = store.clone();
     on_key("backspace", move |_| delete_selected(&s, db.as_deref()));
-    let s = state.clone();
     on_key("mod+,", |_| crate::open_settings());
-    on_key("escape", move |_| {
-        if !s.query.get().is_empty() {
-            s.query.set(String::new());
-        } else {
-            crate::hide_panel();
-        }
-    });
+    // 搜索框聚焦时 Esc 由输入框的 on_key_press 处理，这里是焦点不在输入框时的兜底。
+    on_key("escape", |_| crate::hide_panel());
 }
 
 fn move_selection(state: &State, delta: isize) {
@@ -449,6 +443,13 @@ fn search_box(state: State) -> impl IntoElement {
                 .placeholder_color(rgb(0x8A8178))
                 .text_color(theme::fg())
                 .text_size(px(14.0))
+                // 输入框聚焦时先吃掉 Esc 并失焦；在这里直接收起面板，
+                // 避免要按两次。
+                .on_key_press(|key: &str| {
+                    if key == "Escape" {
+                        crate::hide_panel();
+                    }
+                })
                 .auto_focus(true),
         )
 }
