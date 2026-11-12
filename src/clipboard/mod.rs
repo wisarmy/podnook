@@ -4,6 +4,8 @@
 
 mod macos;
 
+pub use macos::write_files;
+
 use std::sync::{Arc, Once};
 use std::thread;
 use std::time::Duration;
@@ -43,6 +45,8 @@ fn run(store: Arc<Store>) {
         };
         if let Err(e) = store.capture(snapshot, now_secs()) {
             log::error!("capture clipboard: {e}");
+        } else {
+            crate::history::bump();
         }
     }
 }

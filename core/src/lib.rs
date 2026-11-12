@@ -119,7 +119,7 @@ pub struct NewClip {
 }
 
 /// 数据库里的一行。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Clip {
     pub id: i64,
     pub kind: ClipKind,

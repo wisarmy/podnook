@@ -3,14 +3,14 @@
 //! 只读需要的类型，读完即用；所有 AppKit 对象都在 autorelease pool 里创建。
 
 use nsh_platform_macos::objc2::rc::{autoreleasepool, Retained};
-use nsh_platform_macos::objc2::runtime::AnyObject;
+use nsh_platform_macos::objc2::runtime::{AnyObject, ProtocolObject};
 use nsh_platform_macos::objc2::AnyThread;
 use nsh_platform_macos::objc2_app_kit::{
     NSBitmapImageFileType, NSBitmapImageRep, NSBitmapImageRepPropertyKey, NSPasteboard,
-    NSPasteboardType, NSPasteboardTypeFileURL, NSPasteboardTypePNG, NSPasteboardTypeString,
-    NSPasteboardTypeTIFF, NSWorkspace,
+    NSPasteboardItem, NSPasteboardType, NSPasteboardTypeFileURL, NSPasteboardTypePNG,
+    NSPasteboardTypeString, NSPasteboardTypeTIFF, NSPasteboardWriting, NSWorkspace,
 };
-use nsh_platform_macos::objc2_foundation::{NSDictionary, NSURL};
+use nsh_platform_macos::objc2_foundation::{NSArray, NSDictionary, NSString, NSURL};
 
 use podnook_core::Snapshot;
 
@@ -159,6 +159,34 @@ fn size_of(rep: &NSBitmapImageRep) -> (u32, u32) {
         rep.pixelsWide().max(0) as u32,
         rep.pixelsHigh().max(0) as u32,
     )
+}
+
+/// 把一个或多个文件写回系统剪贴板（`public.file-url` 条目）。
+pub fn write_files(paths: &[String]) -> bool {
+    if paths.is_empty() {
+        return false;
+    }
+    autoreleasepool(|_| {
+        let mut items: Vec<Retained<ProtocolObject<dyn NSPasteboardWriting>>> = Vec::new();
+        for path in paths {
+            let item = NSPasteboardItem::new();
+            let ns_path = NSString::from_str(path);
+            let url = NSURL::fileURLWithPath_isDirectory_relativeToURL(&ns_path, false, None);
+            let Some(value) = url.absoluteString() else {
+                continue;
+            };
+            if item.setString_forType(&value, pb_type_file_url()) {
+                items.push(ProtocolObject::from_retained(item));
+            }
+        }
+        if items.is_empty() {
+            return false;
+        }
+        let array = NSArray::from_retained_slice(&items);
+        let pasteboard = NSPasteboard::generalPasteboard();
+        pasteboard.clearContents();
+        pasteboard.writeObjects(&array)
+    })
 }
 
 #[cfg(test)]
