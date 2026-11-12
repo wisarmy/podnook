@@ -25,6 +25,14 @@ pub const RETENTION_DAYS: i64 = 30;
 /// 轮询间隔（毫秒）。
 pub const POLL_MS: u64 = 300;
 
+/// `settings` 表里的键。
+pub const SETTING_RETENTION_COUNT: &str = "retention.count";
+pub const SETTING_RETENTION_DAYS: &str = "retention.days";
+pub const SETTING_IGNORED_BUNDLES: &str = "ignored.bundles";
+pub const SETTING_HOTKEY: &str = "hotkey";
+pub const SETTING_AUTO_PASTE: &str = "auto_paste";
+pub const SETTING_LAUNCH_AT_LOGIN: &str = "launch_at_login";
+
 /// 条目的类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClipKind {

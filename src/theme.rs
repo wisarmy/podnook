@@ -58,3 +58,8 @@ pub const WINDOW_SIZE: (i32, i32) = (980, 640);
 
 /// 窗口标题。
 pub const WINDOW_TITLE: &str = "Podnook";
+
+/// 品牌色上的文字（开关、主按钮）。
+pub fn on_primary() -> AdaptiveColor {
+    AdaptiveColor::rgb(0xFFFFFF, 0x1A1512)
+}

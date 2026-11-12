@@ -101,3 +101,11 @@ fn post_cmd_v() {
         CGEvent::post(CGEventTapLocation::HIDEventTap, Some(&up));
     }
 }
+
+/// 用系统默认方式打开一个 URL（设置里的 GitHub 链接等）。
+pub fn open_external(url: &str) {
+    let Some(url) = NSURL::URLWithString(&NSString::from_str(url)) else {
+        return;
+    };
+    let _ = NSWorkspace::sharedWorkspace().openURL(&url);
+}

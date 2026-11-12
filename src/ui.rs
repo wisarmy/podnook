@@ -15,9 +15,12 @@ use nsh_base::input;
 use nsh_core::keymap::When;
 use nsh_core::prelude::*;
 use podnook_core::db::Store;
-use podnook_core::{hash_text, Clip, ClipKind};
+use podnook_core::{hash_text, Clip, ClipKind, SETTING_AUTO_PASTE};
 
 use crate::theme;
+
+mod settings;
+pub use settings::settings;
 
 thread_local! {
     /// 搜索框的 ref：面板每次呼出时把键盘焦点放进去。
@@ -327,6 +330,12 @@ fn activate_selected(state: &State, store: Option<&Store>, paste: bool) {
     if !ok {
         return;
     }
+
+    // 设置里关掉「自动粘回」时，回车等同于仅复制。
+    let auto_paste = store
+        .map(|store| crate::settings::read_bool(store, SETTING_AUTO_PASTE, true))
+        .unwrap_or(true);
+    let paste = paste && auto_paste;
 
     // 写回剪贴板的可能是截断后的文本；自身写入的指纹要按写进去的内容算。
     let written_hash = match clip.kind {

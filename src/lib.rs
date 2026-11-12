@@ -5,9 +5,11 @@
 
 #[cfg(target_os = "macos")]
 mod clipboard;
+mod login_item;
 #[cfg(target_os = "macos")]
 mod paste;
 mod history;
+mod settings;
 pub mod theme;
 mod ui;
 
@@ -17,7 +19,7 @@ use std::time::Duration;
 use nsh_core::desktop::{WindowAttributes, WindowFrameStyle, WindowKind, WindowLevel};
 use nsh_core::element::desktop::{
     MenuItem, WindowRef, main_window, open_window, quit, register_global_shortcut, set_tray, tray,
-    window as panel_window,
+    unregister_all_global_shortcuts, window as panel_window,
 };
 use nsh_core::element::{asset, assets};
 use nsh_core::platform::Os;
@@ -26,6 +28,7 @@ use nsh_core::prelude::*;
 thread_local! {
     /// 命令式创建的面板；界面线程与按键回调都在同一个线程。
     static PANEL: RefCell<Option<WindowRef>> = const { RefCell::new(None) };
+    static SETTINGS_WINDOW: RefCell<Option<WindowRef>> = const { RefCell::new(None) };
 }
 
 /// 应用暴露给 TSX 的组件集合（`nsh.json` 的 `"rust"`）。
@@ -120,12 +123,10 @@ fn setup_system() {
     #[cfg(target_os = "macos")]
     log::info!("accessibility trusted: {}", crate::paste::is_trusted());
 
-    let taken = register_global_shortcut("alt+mod+v", show_panel);
-    spawn(async move {
-        if !taken.await {
-            log::warn!("⌥⌘V is taken by another app");
-        }
-    });
+    let store = crate::history::init();
+    let config = crate::settings::load(store.as_deref());
+    register_hotkey(&config.hotkey);
+    on_key("mod+,", |_| open_settings());
 
     set_tray(
         tray()
@@ -134,10 +135,64 @@ fn setup_system() {
             .on_click(|_| show_panel())
             .menu([
                 MenuItem::new("打开 Podnook").on_select(show_panel),
+                MenuItem::new("设置…").on_select(open_settings),
                 #[cfg(target_os = "macos")]
                 MenuItem::new("辅助功能设置").on_select(crate::paste::open_accessibility_settings),
                 MenuItem::separator(),
                 MenuItem::new("退出").on_select(quit),
             ]),
     );
+}
+
+
+/// 注册呼出热键（先清掉旧的）。只接受预设列表里的键，避免无效 keystroke 触发 panic。
+pub fn register_hotkey(keystroke: &str) {
+    if !matches!(os(), Os::MacOs) {
+        return;
+    }
+    let keystroke = if settings::HOTKEYS.contains(&keystroke) {
+        keystroke
+    } else {
+        settings::DEFAULT_HOTKEY
+    };
+    unregister_all_global_shortcuts();
+    let taken = register_global_shortcut(keystroke, show_panel);
+    let label = keystroke.to_string();
+    spawn(async move {
+        if !taken.await {
+            log::warn!("{label} is taken by another app");
+        }
+    });
+}
+
+/// 打开（或聚焦）设置窗口。
+pub fn open_settings() {
+    if !matches!(os(), Os::MacOs) {
+        return;
+    }
+    if let Some(window) = SETTINGS_WINDOW.with(|slot| slot.borrow().as_ref().cloned()) {
+        if window.state().is_some() {
+            window.focus();
+            return;
+        }
+    }
+
+    let mut attributes = WindowAttributes::default();
+    attributes.activate = Some(true);
+    attributes.focusable = Some(true);
+    attributes.resizable = Some(false);
+    attributes.minimizable = Some(false);
+    attributes.maximizable = Some(false);
+
+    let window = panel_window()
+        .id("settings")
+        .kind(WindowKind::Normal)
+        .title("Podnook 设置")
+        .default_size(size(px(560.0), px(680.0)))
+        .attributes(attributes)
+        .content(ui::settings);
+    if let Some(window) = open_window(window) {
+        window.focus();
+        SETTINGS_WINDOW.with(|slot| *slot.borrow_mut() = Some(window));
+    }
 }

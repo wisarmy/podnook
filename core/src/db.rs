@@ -13,7 +13,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::{
     hash_bytes, hash_text, preview_for_files, preview_for_image, preview_for_text, truncate_text,
-    Clip, ClipKind, NewClip, Snapshot, IMAGE_LIMIT, RETENTION_COUNT, RETENTION_DAYS, TEXT_LIMIT,
+    Clip, ClipKind, NewClip, Snapshot, IMAGE_LIMIT, RETENTION_COUNT, RETENTION_DAYS,
+    SETTING_IGNORED_BUNDLES, SETTING_RETENTION_COUNT, SETTING_RETENTION_DAYS, TEXT_LIMIT,
 };
 
 const SCHEMA: &str = r#"
@@ -109,6 +110,14 @@ impl Store {
             return Ok(None);
         };
 
+        // 用户选择忽略的来源 App，不记录。
+        if let Some(bundle) = &snapshot.source_bundle {
+            if self.ignored_bundles()?.iter().any(|b| b == bundle) {
+                log::debug!("skip ignored app {bundle}");
+                return Ok(None);
+            }
+        }
+
         let (hash, byte_size) = match kind {
             ClipKind::Text | ClipKind::Link => {
                 let text = snapshot.text.clone().unwrap_or_default();
@@ -189,7 +198,8 @@ impl Store {
         };
 
         let upsert = self.upsert(&clip, now)?;
-        let _ = self.prune(now);
+        let (count, days) = self.retention()?;
+        let _ = self.prune_with(now, count, days);
         log::info!(
             "captured {} ({} bytes, {:?})",
             clip.kind.as_str(),
@@ -320,9 +330,71 @@ impl Store {
         Ok(())
     }
 
-    /// 清理过期条目：超过 30 天或超出最近 1000 条（pin 的永不清理）。
+    /// 读一条设置。
+    pub fn get_setting(&self, key: &str) -> rusqlite::Result<Option<String>> {
+        let conn = self.lock();
+        conn.query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            params![key],
+            |row| row.get(0),
+        )
+        .optional()
+    }
+
+    /// 写一条设置。
+    pub fn set_setting(&self, key: &str, value: &str) -> rusqlite::Result<()> {
+        let conn = self.lock();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
+    fn retention(&self) -> rusqlite::Result<(i64, i64)> {
+        let count = self
+            .get_setting(SETTING_RETENTION_COUNT)?
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(RETENTION_COUNT);
+        let days = self
+            .get_setting(SETTING_RETENTION_DAYS)?
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(RETENTION_DAYS);
+        Ok((count, days))
+    }
+
+    /// 被忽略来源 App 的 bundle id 列表。
+    pub fn ignored_bundles(&self) -> rusqlite::Result<Vec<String>> {
+        Ok(self
+            .get_setting(SETTING_IGNORED_BUNDLES)?
+            .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
+            .unwrap_or_default())
+    }
+
+    /// 清空全部历史（pin 的也删掉）并删除图片文件。
+    pub fn clear_history(&self) -> rusqlite::Result<usize> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare("SELECT image_path FROM clips")?;
+        let images: Vec<Option<String>> = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        drop(stmt);
+        let count = conn.execute("DELETE FROM clips", [])?;
+        drop(conn);
+        for path in images.into_iter().flatten() {
+            let _ = std::fs::remove_file(path);
+        }
+        Ok(count)
+    }
+
+    /// 清理过期条目：超过 `days` 天或超出最近 `count` 条（pin 的永不清理）。
     pub fn prune(&self, now: i64) -> rusqlite::Result<usize> {
-        let cutoff = now - RETENTION_DAYS * 86_400;
+        self.prune_with(now, RETENTION_COUNT, RETENTION_DAYS)
+    }
+
+    pub fn prune_with(&self, now: i64, count: i64, days: i64) -> rusqlite::Result<usize> {
+        let cutoff = now - days * 86_400;
         let mut deleted = 0;
         deleted += self.remove_matching(
             "SELECT id, image_path FROM clips
@@ -335,7 +407,7 @@ impl Store {
                SELECT id FROM clips WHERE pinned = 0
                ORDER BY last_copied_at DESC LIMIT ?1
              )",
-            params![RETENTION_COUNT],
+            params![count],
         )?;
         Ok(deleted)
     }
@@ -464,6 +536,52 @@ mod tests {
         let rows = store.list(10).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].preview, "new");
+    }
+
+    #[test]
+    fn ignores_apps_from_settings() {
+        let store = store();
+        store
+            .set_setting(crate::SETTING_IGNORED_BUNDLES, r#"["com.apple.Terminal"]"#)
+            .unwrap();
+        assert_eq!(
+            store.ignored_bundles().unwrap(),
+            vec!["com.apple.Terminal".to_string()]
+        );
+
+        let mut ignored = text_clip("secret");
+        ignored.source_bundle = Some("com.apple.Terminal".into());
+        assert!(store.capture(ignored, 1).unwrap().is_none());
+
+        let mut kept = text_clip("kept");
+        kept.source_bundle = Some("com.apple.Safari".into());
+        assert!(store.capture(kept, 2).unwrap().is_some());
+    }
+
+    #[test]
+    fn retention_settings_apply() {
+        let store = store();
+        store
+            .set_setting(crate::SETTING_RETENTION_COUNT, "2")
+            .unwrap();
+        store
+            .set_setting(crate::SETTING_RETENTION_DAYS, "365")
+            .unwrap();
+        for i in 0..4 {
+            store
+                .capture(text_clip(&format!("clip {i}")), i as i64)
+                .unwrap();
+        }
+        assert_eq!(store.list(10).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn clear_history_removes_everything() {
+        let store = store();
+        store.capture(text_clip("a"), 1).unwrap();
+        store.capture(text_clip("b"), 2).unwrap();
+        assert_eq!(store.clear_history().unwrap(), 2);
+        assert!(store.list(10).unwrap().is_empty());
     }
 
     #[test]

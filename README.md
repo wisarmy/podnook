@@ -8,10 +8,12 @@
 
 ## 状态
 
-v0.1（M3 系统集成）。当前能力：菜单栏常驻、无 Dock 图标、全局热键
+v0.1（M4 打包）。当前能力：菜单栏常驻、无 Dock 图标、全局热键
 ⌥⌘V 呼出无边框浮层（失焦或 Esc 收起）；后台监听剪贴板（文本 / 图片 /
 文件 / 链接）、去重置顶、隐私标记过滤、SQLite 持久化；搜索、类型筛选、
 预览与元信息、pin、删除；回车自动粘回前台 App（⌘↵ 仅复制）。
+设置窗口（⌘, 或托盘菜单）：热键、保留期、自动粘回、开机自启、忽略 App、
+清空历史、权限状态；`nsh package --target macos` 产出 `.app`。
 
 计划与里程碑见 `CONTEXT.md`。
 
@@ -45,7 +47,7 @@ nsh run          # 运行 Rust 应用（增量编译 + 重启）
 nsh check        # 类型/编译检查
 nsh test         # headless 测试（含 Rust 单测）
 cargo test -p podnook-core   # 领域层与数据库单测，不依赖 NSH
-nsh package --target macos   # 打包为 ad-hoc 签名的 .app
+nsh package --target macos   # 打包为 ad-hoc 签名的 .app（.nsh/out/Podnook.app）
 ```
 
 > ⚠️ NSH 的 debug 构建产物很大：首次完整构建 `target/` 约 15 GB（多套 feature 的依赖各编译一份）。
