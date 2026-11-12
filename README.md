@@ -8,7 +8,10 @@
 
 ## 状态
 
-v0.1（M0 骨架阶段）。当前能力：可运行的空壳界面。
+v0.1（M1 数据层）。当前能力：后台监听剪贴板（文本 / 图片 / 文件 / 链接）、
+去重置顶、隐私标记过滤、记录来源 App、SQLite 持久化与保留期清理。
+界面仍是静态骨架，M2 接入真实数据。
+
 计划与里程碑见 `CONTEXT.md`。
 
 ## 技术栈
@@ -39,7 +42,8 @@ curl -fsSL https://nsh.dev/install.sh | sh
 ```sh
 nsh run          # 运行 Rust 应用（增量编译 + 重启）
 nsh check        # 类型/编译检查
-nsh test         # headless 测试
+nsh test         # headless 测试（含 Rust 单测）
+cargo test -p podnook-core   # 领域层与数据库单测，不依赖 NSH
 nsh package --target macos   # 打包为 ad-hoc 签名的 .app
 ```
 

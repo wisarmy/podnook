@@ -1,8 +1,11 @@
 //! Podnook — 本地优先的 macOS 剪贴板历史。
 //!
-//! 纯 Rust 的 Native Shell 应用：界面在这里组装，系统集成（剪贴板监听、
-//! 粘回、登录项、SQLite）在后续里程碑接入 Rust 侧。
+//! 纯 Rust 的 Native Shell 应用：界面在 `ui` 里组装，系统集成在 `clipboard`
+//! 与 `history` 里，M1 只做数据层，界面仍用假数据。
 
+#[cfg(target_os = "macos")]
+mod clipboard;
+mod history;
 pub mod theme;
 mod ui;
 
@@ -18,5 +21,7 @@ fn native(registry: &mut Registry) {
 /// 应用根组件，`nsh.json` 的 `"root"`。
 #[component]
 pub fn App() -> impl IntoElement {
+    #[cfg(target_os = "macos")]
+    crate::clipboard::start_collector();
     ui::shell()
 }

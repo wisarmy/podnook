@@ -1,0 +1,485 @@
+//! 本地历史库：`rusqlite`（SQLite）+ 图片文件缓存。
+//!
+//! 一个 `Store` 同时服务轮询线程与界面线程：连接放在 `Mutex` 里，
+//! 每次操作短持有，不在锁内做文件 IO 之外的重活。
+
+// M1 先把数据层 API 铺齐，界面在 M2 才消费；测试已覆盖这些入口。
+#![allow(dead_code)]
+
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+use rusqlite::{params, Connection, OptionalExtension};
+
+use crate::{
+    hash_bytes, hash_text, preview_for_files, preview_for_image, preview_for_text, truncate_text,
+    Clip, ClipKind, NewClip, Snapshot, IMAGE_LIMIT, RETENTION_COUNT, RETENTION_DAYS, TEXT_LIMIT,
+};
+
+const SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS clips (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind           TEXT    NOT NULL,
+  content        TEXT,
+  preview        TEXT    NOT NULL DEFAULT '',
+  hash           TEXT    NOT NULL UNIQUE,
+  image_path     TEXT,
+  image_w        INTEGER,
+  image_h        INTEGER,
+  image_bytes    INTEGER,
+  file_uris      TEXT,
+  source_app     TEXT,
+  source_bundle  TEXT,
+  byte_size      INTEGER NOT NULL DEFAULT 0,
+  truncated      INTEGER NOT NULL DEFAULT 0,
+  created_at     INTEGER NOT NULL,
+  last_copied_at INTEGER NOT NULL,
+  pinned         INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS clips_order ON clips(pinned DESC, last_copied_at DESC);
+CREATE INDEX IF NOT EXISTS clips_age ON clips(last_copied_at);
+CREATE TABLE IF NOT EXISTS settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+"#;
+
+/// 写入结果：新条目，还是把已有条目置顶。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Upsert {
+    Inserted,
+    Bumped,
+}
+
+/// 一次捕获的结果。
+#[derive(Debug, Clone)]
+pub struct Capture {
+    pub kind: ClipKind,
+    pub hash: String,
+    pub upsert: Upsert,
+}
+
+pub struct Store {
+    conn: Mutex<Connection>,
+    /// 数据目录：`history.db` 与 `images/` 都在这里。
+    dir: PathBuf,
+    /// 下一次轮询要忽略的内容指纹（我们自己写回剪贴板的那一条）。
+    self_write: Mutex<Option<String>>,
+}
+
+impl Store {
+    /// 打开（或创建）`dir` 下的历史库。
+    pub fn open(dir: &Path) -> rusqlite::Result<Self> {
+        std::fs::create_dir_all(dir.join("images")).map_err(|e| {
+            rusqlite::Error::InvalidParameterName(format!("create data dir: {e}"))
+        })?;
+        let conn = Connection::open(dir.join("history.db"))?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
+        conn.execute_batch(SCHEMA)?;
+        Ok(Self {
+            conn: Mutex::new(conn),
+            dir: dir.to_path_buf(),
+            self_write: Mutex::new(None),
+        })
+    }
+
+    /// 测试用：内存库。
+    pub fn open_in_memory(dir: PathBuf) -> rusqlite::Result<Self> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(SCHEMA)?;
+        Ok(Self {
+            conn: Mutex::new(conn),
+            dir,
+            self_write: Mutex::new(None),
+        })
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.conn.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// 标记我们即将写回剪贴板的内容，下一次轮询读到它时跳过。
+    pub fn mark_self_write(&self, hash: String) {
+        *self.self_write.lock().unwrap_or_else(|e| e.into_inner()) = Some(hash);
+    }
+
+    /// 把一条剪贴板快照落库。没有可记录内容、超限或属于自身写入时返回 `None`。
+    pub fn capture(&self, snapshot: Snapshot, now: i64) -> rusqlite::Result<Option<Capture>> {
+        let Some(kind) = snapshot.kind() else {
+            return Ok(None);
+        };
+
+        let (hash, byte_size) = match kind {
+            ClipKind::Text | ClipKind::Link => {
+                let text = snapshot.text.clone().unwrap_or_default();
+                (hash_text(&text), text.len() as i64)
+            }
+            ClipKind::Image => {
+                let png = snapshot.image_png.as_deref().unwrap_or_default();
+                if png.len() > IMAGE_LIMIT {
+                    log::info!(
+                        "skip image: {} bytes over the {} limit",
+                        png.len(),
+                        IMAGE_LIMIT
+                    );
+                    return Ok(None);
+                }
+                (hash_bytes(png), png.len() as i64)
+            }
+            ClipKind::File => {
+                let joined = snapshot.file_uris.join("\n");
+                (hash_bytes(joined.as_bytes()), snapshot.file_bytes.unwrap_or(0))
+            }
+        };
+
+        {
+            let mut self_write = self.self_write.lock().unwrap_or_else(|e| e.into_inner());
+            if self_write.as_deref() == Some(hash.as_str()) {
+                *self_write = None;
+                log::debug!("skip our own clipboard write");
+                return Ok(None);
+            }
+        }
+
+        let (content, preview, truncated) = match kind {
+            ClipKind::Text | ClipKind::Link => {
+                let text = snapshot.text.clone().unwrap_or_default();
+                let (stored, truncated) = truncate_text(&text, TEXT_LIMIT);
+                let preview = preview_for_text(&stored);
+                (Some(stored), preview, truncated)
+            }
+            ClipKind::Image => (None, preview_for_image(snapshot.image_size), false),
+            ClipKind::File => (None, preview_for_files(&snapshot.file_uris), false),
+        };
+
+        let mut image_path = None;
+        if kind == ClipKind::Image {
+            let bytes = snapshot.image_png.as_deref().unwrap_or_default();
+            let path = self.dir.join("images").join(format!("{hash}.png"));
+            if let Err(e) = std::fs::write(&path, bytes) {
+                log::error!("write image {}: {e}", path.display());
+                return Ok(None);
+            }
+            image_path = Some(path.to_string_lossy().to_string());
+        }
+
+        let (image_w, image_h) = match snapshot.image_size {
+            Some((w, h)) => (Some(w as i64), Some(h as i64)),
+            None => (None, None),
+        };
+
+        let clip = NewClip {
+            kind,
+            content,
+            preview,
+            hash: hash.clone(),
+            image_path,
+            image_w,
+            image_h,
+            image_bytes: if kind == ClipKind::Image {
+                Some(byte_size)
+            } else {
+                None
+            },
+            file_uris: snapshot.file_uris.clone(),
+            source_app: snapshot.source_app.clone(),
+            source_bundle: snapshot.source_bundle.clone(),
+            byte_size,
+            truncated,
+        };
+
+        let upsert = self.upsert(&clip, now)?;
+        let _ = self.prune(now);
+        log::info!(
+            "captured {} ({} bytes, {:?})",
+            clip.kind.as_str(),
+            clip.byte_size,
+            upsert
+        );
+        Ok(Some(Capture {
+            kind,
+            hash,
+            upsert,
+        }))
+    }
+
+    /// 写入一条记录；同 hash 已存在时只更新「最近复制时间」并置顶。
+    pub fn upsert(&self, clip: &NewClip, now: i64) -> rusqlite::Result<Upsert> {
+        let conn = self.lock();
+        let existing: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM clips WHERE hash = ?1",
+                params![clip.hash],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if let Some(id) = existing {
+            conn.execute(
+                "UPDATE clips SET
+                   last_copied_at = ?1,
+                   source_app = COALESCE(?2, source_app),
+                   source_bundle = COALESCE(?3, source_bundle)
+                 WHERE id = ?4",
+                params![now, clip.source_app, clip.source_bundle, id],
+            )?;
+            return Ok(Upsert::Bumped);
+        }
+
+        let file_uris = serde_json::to_string(&clip.file_uris).unwrap_or_else(|_| "[]".into());
+        conn.execute(
+            "INSERT INTO clips
+               (kind, content, preview, hash, image_path, image_w, image_h, image_bytes,
+                file_uris, source_app, source_bundle, byte_size, truncated,
+                created_at, last_copied_at, pinned)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14, 0)",
+            params![
+                clip.kind.as_str(),
+                clip.content,
+                clip.preview,
+                clip.hash,
+                clip.image_path,
+                clip.image_w,
+                clip.image_h,
+                clip.image_bytes,
+                file_uris,
+                clip.source_app,
+                clip.source_bundle,
+                clip.byte_size,
+                clip.truncated as i64,
+                now,
+            ],
+        )?;
+        Ok(Upsert::Inserted)
+    }
+
+    /// 按「pin 优先、最近复制优先」列出条目。
+    pub fn list(&self, limit: i64) -> rusqlite::Result<Vec<Clip>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, kind, content, preview, hash, image_path, image_w, image_h,
+                    image_bytes, file_uris, source_app, source_bundle, byte_size,
+                    truncated, created_at, last_copied_at, pinned
+             FROM clips
+             ORDER BY pinned DESC, last_copied_at DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], |row| {
+            let kind: String = row.get(1)?;
+            let file_uris: Option<String> = row.get(9)?;
+            Ok(Clip {
+                id: row.get(0)?,
+                kind: ClipKind::parse(&kind).unwrap_or(ClipKind::Text),
+                content: row.get(2)?,
+                preview: row.get(3)?,
+                hash: row.get(4)?,
+                image_path: row.get(5)?,
+                image_w: row.get(6)?,
+                image_h: row.get(7)?,
+                image_bytes: row.get(8)?,
+                file_uris: file_uris
+                    .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
+                    .unwrap_or_default(),
+                source_app: row.get(10)?,
+                source_bundle: row.get(11)?,
+                byte_size: row.get(12)?,
+                truncated: row.get::<_, i64>(13)? != 0,
+                created_at: row.get(14)?,
+                last_copied_at: row.get(15)?,
+                pinned: row.get::<_, i64>(16)? != 0,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// 设置/取消 pin。
+    pub fn set_pinned(&self, id: i64, pinned: bool) -> rusqlite::Result<()> {
+        let conn = self.lock();
+        conn.execute(
+            "UPDATE clips SET pinned = ?1 WHERE id = ?2",
+            params![pinned as i64, id],
+        )?;
+        Ok(())
+    }
+
+    /// 删除一条，并清掉它的图片文件。
+    pub fn delete(&self, id: i64) -> rusqlite::Result<()> {
+        let conn = self.lock();
+        let image_path: Option<Option<String>> = conn
+            .query_row(
+                "SELECT image_path FROM clips WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        conn.execute("DELETE FROM clips WHERE id = ?1", params![id])?;
+        drop(conn);
+        if let Some(Some(path)) = image_path {
+            let _ = std::fs::remove_file(path);
+        }
+        Ok(())
+    }
+
+    /// 清理过期条目：超过 30 天或超出最近 1000 条（pin 的永不清理）。
+    pub fn prune(&self, now: i64) -> rusqlite::Result<usize> {
+        let cutoff = now - RETENTION_DAYS * 86_400;
+        let mut deleted = 0;
+        deleted += self.remove_matching(
+            "SELECT id, image_path FROM clips
+             WHERE pinned = 0 AND last_copied_at < ?1",
+            params![cutoff],
+        )?;
+        deleted += self.remove_matching(
+            "SELECT id, image_path FROM clips
+             WHERE pinned = 0 AND id NOT IN (
+               SELECT id FROM clips WHERE pinned = 0
+               ORDER BY last_copied_at DESC LIMIT ?1
+             )",
+            params![RETENTION_COUNT],
+        )?;
+        Ok(deleted)
+    }
+
+    fn remove_matching(
+        &self,
+        sql: &str,
+        args: impl rusqlite::Params,
+    ) -> rusqlite::Result<usize> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(sql)?;
+        let rows: Vec<(i64, Option<String>)> = stmt
+            .query_map(args, |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        drop(stmt);
+        for (id, image_path) in &rows {
+            conn.execute("DELETE FROM clips WHERE id = ?1", params![id])?;
+            if let Some(path) = image_path {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+        Ok(rows.len())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn store() -> Store {
+        let dir = std::env::temp_dir().join(format!("podnook-db-{}", now_secs_nanos()));
+        Store::open_in_memory(dir).unwrap()
+    }
+
+    fn now_secs_nanos() -> u128 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    }
+
+    fn text_clip(text: &str) -> Snapshot {
+        Snapshot {
+            text: Some(text.into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn inserts_and_dedupes_to_the_top() {
+        let store = store();
+        let first = store.capture(text_clip("hello"), 100).unwrap().unwrap();
+        assert_eq!(first.upsert, Upsert::Inserted);
+
+        let second = store.capture(text_clip("hello"), 200).unwrap().unwrap();
+        assert_eq!(second.upsert, Upsert::Bumped);
+
+        let rows = store.list(10).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].last_copied_at, 200);
+        assert_eq!(rows[0].created_at, 100);
+        assert_eq!(rows[0].preview, "hello");
+    }
+
+    #[test]
+    fn classifies_links_and_files() {
+        let store = store();
+        store.capture(text_clip("https://nsh.dev/"), 1).unwrap();
+        store
+            .capture(
+                Snapshot {
+                    file_uris: vec!["/tmp/a.txt".into(), "/tmp/b.txt".into()],
+                    file_bytes: Some(42),
+                    ..Default::default()
+                },
+                2,
+            )
+            .unwrap();
+        let rows = store.list(10).unwrap();
+        assert_eq!(rows[0].kind, ClipKind::File);
+        assert_eq!(rows[0].preview, "a.txt 等 2 个文件");
+        assert_eq!(rows[0].byte_size, 42);
+        assert_eq!(rows[1].kind, ClipKind::Link);
+    }
+
+    #[test]
+    fn skips_our_own_write_once() {
+        let store = store();
+        let hash = hash_text("pasted");
+        store.mark_self_write(hash);
+        assert!(store.capture(text_clip("pasted"), 1).unwrap().is_none());
+        // 第二次是用户自己复制的，应该记录。
+        assert!(store.capture(text_clip("pasted"), 2).unwrap().is_some());
+    }
+
+    #[test]
+    fn truncates_long_text_but_hashes_the_original() {
+        let store = store();
+        let full = "字".repeat(TEXT_LIMIT);
+        store.capture(text_clip(&full), 1).unwrap();
+        let rows = store.list(1).unwrap();
+        assert!(rows[0].truncated);
+        let stored = rows[0].content.as_ref().unwrap();
+        assert!(stored.len() <= TEXT_LIMIT);
+        // 102400 落在字符中间，截断点会回退到 102399。
+        assert_eq!(stored.len(), TEXT_LIMIT - 1);
+        assert!(full.starts_with(stored));
+        assert_eq!(rows[0].byte_size, full.len() as i64);
+    }
+
+    #[test]
+    fn prunes_by_age_but_keeps_pins() {
+        let store = store();
+        store.capture(text_clip("old"), 1).unwrap();
+        let old_id = store.list(1).unwrap()[0].id;
+        store.set_pinned(old_id, true).unwrap();
+
+        // 新条目写入时 capture 会顺手 prune；pin 的旧条目必须留下。
+        store.capture(text_clip("new"), 40 * 86_400).unwrap();
+        let rows = store.list(10).unwrap();
+        assert_eq!(rows.len(), 2);
+
+        store.set_pinned(old_id, false).unwrap();
+        let deleted = store.prune(40 * 86_400).unwrap();
+        assert_eq!(deleted, 1);
+        let rows = store.list(10).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].preview, "new");
+    }
+
+    #[test]
+    fn prunes_beyond_the_count_limit() {
+        let store = store();
+        for i in 0..(RETENTION_COUNT + 5) {
+            store
+                .capture(text_clip(&format!("clip {i}")), i as i64)
+                .unwrap();
+        }
+        // capture 每次都 prune，所以最后一次写入后已经只剩 1000 条。
+        let rows = store.list(RETENTION_COUNT + 10).unwrap();
+        assert_eq!(rows.len() as i64, RETENTION_COUNT);
+        assert_eq!(rows[0].preview, format!("clip {}", RETENTION_COUNT + 4));
+        assert_eq!(rows.last().unwrap().preview, "clip 5");
+        // 再 prune 一次是幂等的。
+        assert_eq!(store.prune(RETENTION_COUNT + 5).unwrap(), 0);
+    }
+}
