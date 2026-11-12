@@ -45,6 +45,7 @@ v0.1 只做剪贴板历史；Podnook 之后可以长成「多功能个人工具�
 - **默认呼出热键 ⌥⌘V**（NSH keystroke 写作 `alt+mod+v`），可配置。不用 ⌘⇧V，避免独占各 App 的「粘贴为纯文本」。
 - **数据本地持久化**：`rusqlite`（`history.db`）+ 图片文件缓存；默认保留 1000 条或 30 天，pin 永不过期。
 - **窗口形态**：无边框（`frame: "none"`）+ 透明 + 14pt 圆角 + 系统阴影；顶部栏作为拖动区域，不显示系统标题栏。
+- **App 图标**：W4 方案——浅暖底 + 陶土色弯曲豆荚 + 三颗豌豆 + 短茎叶，大面积留白；`assets/icon.svg` 为源，`assets/icon.png`（1024）随 `nsh package` 生成 `AppIcon.icns`；托盘用同符号的单色模板。
 - **分层**：领域模型、捕获规则与 SQLite 在独立的 `podnook-core` crate（不依赖 NSH/AppKit），应用层只负责把 `NSPasteboard` 快照喂进来；`cargo test -p podnook-core` 可快速跑完。
 
 ## NSH 版本与文档纪律
