@@ -202,8 +202,9 @@ pub fn register_hotkey_with(
     true
 }
 
-/// 打开（或聚焦）设置窗口。设置是浮层窗口：始终浮在其他 App 之上，
-/// 且呼出设置前先收起剪贴板面板，保证同一时间只有一个 Podnook 窗口。
+/// 打开（或聚焦）设置窗口。设置是浮层窗口，拿到焦点时浮在最前；点其他
+/// App 失去焦点后降到普通层级，会退到那个 App 后面（不会一直置顶）。
+/// 呼出设置前先收起剪贴板面板，保证同一时间只有一个 Podnook 窗口。
 pub fn open_settings() {
     if !matches!(os(), Os::MacOs) {
         return;
@@ -211,12 +212,19 @@ pub fn open_settings() {
     hide_panel();
     if let Some(window) = SETTINGS_WINDOW.with(|slot| slot.borrow().as_ref().cloned()) {
         if window.state().is_some() {
+            // 之前失去焦点时降到了普通层级，先浮起来再聚焦。
+            let mut attributes = WindowAttributes::default();
+            attributes.level = Some(WindowLevel::Floating);
+            window.set(attributes);
             window.focus();
+            let refocus = window.clone();
+            set_timeout(Duration::from_millis(150), move || refocus.focus());
             return;
         }
     }
 
     let mut attributes = WindowAttributes::default();
+    attributes.activate = Some(false);
     attributes.focusable = Some(true);
     attributes.resizable = Some(false);
     attributes.close_on_escape = Some(true);
@@ -231,7 +239,22 @@ pub fn open_settings() {
         .content(ui::settings);
     let opened = open_window(window);
     if let Some(window) = opened {
+        // 点其他 App 时窗口失去键盘焦点：降到普通层级，退到那个 App 后面。
+        // 再点回设置，或用 ⌘, 重新打开时，再浮到最前。
+        let settings = window.clone();
+        window.on_focus_change(move |focused| {
+            let mut attributes = WindowAttributes::default();
+            attributes.level = Some(if focused {
+                WindowLevel::Floating
+            } else {
+                WindowLevel::Normal
+            });
+            settings.set(attributes);
+        });
         window.focus();
+        // 面板刚收起时焦点会掉；等窗口真正上屏后再聚焦一次。
+        let refocus = window.clone();
+        set_timeout(Duration::from_millis(150), move || refocus.focus());
         SETTINGS_WINDOW.with(|slot| *slot.borrow_mut() = Some(window));
     }
 }
