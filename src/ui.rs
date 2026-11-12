@@ -269,6 +269,7 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     let db = store.clone();
     on_key("backspace", move |_| delete_selected(&s, db.as_deref()));
     let s = state.clone();
+    on_key("mod+,", |_| crate::open_settings());
     on_key("escape", move |_| {
         if !s.query.get().is_empty() {
             s.query.set(String::new());
@@ -785,7 +786,6 @@ fn footer_inner(state: State) -> impl IntoElement {
             .child(hint("固定", key_label("mod+p")))
             .child(hint("删除", key_label("backspace"))),
     };
-    right = right.child(settings_button());
 
     view()
         .flex_row()
@@ -808,22 +808,6 @@ fn footer_inner(state: State) -> impl IntoElement {
                 ),
         )
         .child(right)
-}
-
-fn settings_button() -> View {
-    view()
-        .on_press(|| crate::open_settings())
-        .px_2()
-        .py_1()
-        .rounded(px(5.0))
-        .bg(theme::card())
-        .border_1()
-        .border_color(theme::border())
-        .child(
-            text("设置")
-                .text_size(px(11.0))
-                .text_color(theme::muted_fg()),
-        )
 }
 
 fn hint(label: &'static str, key: String) -> impl IntoElement {

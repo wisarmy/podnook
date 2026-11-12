@@ -1844,6 +1844,7 @@ name = "nsh-app-podnook"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "block2",
  "env_logger",
  "jiff",
  "log",

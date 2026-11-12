@@ -5,6 +5,8 @@
 
 #[cfg(target_os = "macos")]
 mod clipboard;
+#[cfg(target_os = "macos")]
+mod hotkey_recorder;
 mod login_item;
 #[cfg(target_os = "macos")]
 mod paste;
@@ -24,6 +26,7 @@ use nsh_core::element::desktop::{
 use nsh_core::element::{asset, assets};
 use nsh_core::platform::Os;
 use nsh_core::prelude::*;
+
 
 thread_local! {
     /// 命令式创建的面板；界面线程与按键回调都在同一个线程。
@@ -78,7 +81,8 @@ fn open_panel_once() {
         .default_size(size(px(980.0), px(640.0)))
         .attributes(panel_attributes())
         .content(ui::shell);
-    match open_window(window) {
+    let opened = open_window(window);
+    match opened {
         Some(window) => {
             // 点到别处就收起面板（不销毁，下次呼出保留状态）。
             let hidden = window.clone();
@@ -103,7 +107,9 @@ pub fn show_panel() {
             // 窗口成为 key 之后再聚焦搜索框。
             set_timeout(Duration::from_millis(30), ui::prepare_for_show);
         }
-        None => main_window().focus(),
+        None => {
+            main_window().focus();
+        }
     });
 }
 
@@ -131,7 +137,6 @@ fn setup_system() {
         settings::DEFAULT_HOTKEY
     };
     register_hotkey(configured);
-    on_key("mod+,", |_| open_settings());
 
     set_tray(
         tray()
@@ -149,6 +154,13 @@ fn setup_system() {
     );
 }
 
+
+/// 录制热键前先注销，避免按下旧组合键时面板被呼出。
+pub fn suspend_hotkey() {
+    if matches!(os(), Os::MacOs) {
+        unregister_all_global_shortcuts();
+    }
+}
 
 /// 注册呼出热键（先清掉旧的）。返回 keystroke 是否合法。
 pub fn register_hotkey(keystroke: &str) -> bool {
@@ -182,7 +194,7 @@ pub fn open_settings() {
     }
 
     let mut attributes = WindowAttributes::default();
-    attributes.activate = Some(true);
+    attributes.activate = Some(false);
     attributes.focusable = Some(true);
     attributes.resizable = Some(false);
     attributes.minimizable = Some(false);
@@ -195,7 +207,8 @@ pub fn open_settings() {
         .default_size(size(px(560.0), px(680.0)))
         .attributes(attributes)
         .content(ui::settings);
-    if let Some(window) = open_window(window) {
+    let opened = open_window(window);
+    if let Some(window) = opened {
         window.focus();
         SETTINGS_WINDOW.with(|slot| *slot.borrow_mut() = Some(window));
     }

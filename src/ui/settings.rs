@@ -17,7 +17,7 @@ pub fn settings() -> impl IntoElement {
     let config = prefs::load(store.as_deref());
 
     let hotkey = signal(config.hotkey.clone());
-    let hotkey_input = signal(config.hotkey.clone());
+    let recording = signal(false);
     let count = signal(config.retention_count);
     let days = signal(config.retention_days);
     let auto_paste = signal(config.auto_paste);
@@ -29,51 +29,80 @@ pub fn settings() -> impl IntoElement {
     let confirm_clear = signal(false);
     let trusted = signal(crate::paste::is_trusted());
 
-    // 呼出热键
-    let mut hotkey_row = view().flex_row().items_center().gap_2();
-    for key in prefs::HOTKEYS {
-        let key = *key;
-        let store = store.clone();
-        hotkey_row = hotkey_row.child(choice(
-            key_label(key),
-            move || hotkey.get() == key,
-            move || {
-                hotkey.set(key.to_string());
-                hotkey_input.set(key.to_string());
-                if let Some(store) = &store {
-                    prefs::write(store, SETTING_HOTKEY, key);
-                }
-                crate::register_hotkey(key);
-                show_notice(notice, "已保存");
-            },
-        ));
-    }
-
-    let store_for_custom = store.clone();
-    let custom_row = view()
+    // 呼出热键：按下组合键录制
+    let record_control = view()
         .flex_row()
         .items_center()
-        .gap_2()
-        .child(
-            input()
-                .w(px(190.0))
-                .value(hotkey_input)
-                .on_change(move |value: &str| hotkey_input.set(value.to_string()))
-                .placeholder("alt+mod+v")
-                .text_size(px(12.0)),
-        )
-        .child(choice("应用", || false, move || {
-            let value = hotkey_input.get().trim().to_string();
-            if !crate::register_hotkey(&value) {
-                show_notice(notice, "格式无效，例如 alt+mod+v");
-                return;
+        .gap_3()
+        .child(dynamic(move || {
+            if recording.get() {
+                text("请按下组合键…")
+                    .text_size(px(12.0))
+                    .text_color(theme::primary())
+            } else {
+                text(key_label(&hotkey.get()))
+                    .text_size(px(12.0))
+                    .text_color(theme::muted_fg())
             }
-            hotkey.set(value.clone());
-            if let Some(store) = &store_for_custom {
-                prefs::write(store, SETTING_HOTKEY, &value);
+        }))
+        .child(dynamic(move || {
+            if recording.get() {
+                choice("取消", || true, move || {
+                    crate::hotkey_recorder::cancel();
+                    recording.set(false);
+                    crate::register_hotkey(&hotkey.get());
+                    show_notice(notice, "已取消");
+                })
+            } else {
+                choice("录制", || false, move || {
+                    recording.set(true);
+                    crate::suspend_hotkey();
+                    crate::hotkey_recorder::start();
+                    show_notice(notice, "请按下组合键；Esc 取消");
+                })
             }
-            show_notice(notice, "已应用");
         }));
+
+    let store_for_poll = store.clone();
+    set_interval(std::time::Duration::from_millis(100), move || {
+        if !recording.get() {
+            return;
+        }
+        let Some(result) = crate::hotkey_recorder::take_result() else {
+            return;
+        };
+        recording.set(false);
+        match result {
+            Some(key) => {
+                if crate::register_hotkey(&key) {
+                    hotkey.set(key.clone());
+                    if let Some(store) = &store_for_poll {
+                        prefs::write(store, SETTING_HOTKEY, &key);
+                    }
+                    show_notice(notice, "已应用");
+                } else {
+                    crate::register_hotkey(&hotkey.get());
+                    show_notice(notice, "组合键无效");
+                }
+            }
+            None => {
+                crate::register_hotkey(&hotkey.get());
+                show_notice(notice, "已取消");
+            }
+        }
+    });
+
+    // 系统设置里已授权后，这里自动刷新。
+    set_interval(std::time::Duration::from_millis(1000), move || {
+        let now = crate::paste::is_trusted();
+        if trusted.get() != now {
+            trusted.set(now);
+        }
+    });
+    cleanup(move || {
+        crate::hotkey_recorder::cancel();
+        crate::register_hotkey(&hotkey.get());
+    });
 
     // 保留条数
     let mut count_row = view().flex_row().items_center().gap_2();
@@ -323,7 +352,14 @@ pub fn settings() -> impl IntoElement {
         ),
     );
 
-    let permission_rows = view().flex_col().child(setting_row("辅助功能", permission_row));
+    let permission_rows = view()
+        .flex_col()
+        .child(setting_row("辅助功能", permission_row))
+        .child(view().px_4().pb_3().child(
+            text("若系统设置已开启但这里仍显示未授权：完全退出 App 后重新打开；重新打包会改变 ad-hoc 签名，需要移除旧的辅助功能条目再添加。")
+                .text_size(px(11.0))
+                .text_color(theme::muted_fg()),
+        ));
 
     view()
         .flex_1()
@@ -338,10 +374,9 @@ pub fn settings() -> impl IntoElement {
                     "呼出",
                     view()
                         .flex_col()
-                        .child(setting_row("呼出热键", hotkey_row))
-                        .child(setting_row("自定义", custom_row))
+                        .child(setting_row("呼出热键", record_control))
                         .child(view().px_4().pb_3().child(
-                            text("格式：alt+mod+v、ctrl+shift+space；建议至少包含 mod 或 ctrl。")
+                            text("点「录制」后直接按下组合键；至少包含 mod / ctrl / alt，Esc 取消。")
                                 .text_size(px(11.0))
                                 .text_color(theme::muted_fg()),
                         )),

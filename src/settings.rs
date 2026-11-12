@@ -8,9 +8,6 @@ use podnook_core::{
 /// 默认呼出热键。
 pub const DEFAULT_HOTKEY: &str = "alt+mod+v";
 
-/// 可选热键（NSH keystroke）。避开了各 App 常用的 ⌘⇧V。
-pub const HOTKEYS: &[&str] = &["alt+mod+v", "alt+mod+c", "ctrl+alt+v", "mod+shift+space"];
-
 #[derive(Debug, Clone)]
 pub struct Settings {
     pub hotkey: String,

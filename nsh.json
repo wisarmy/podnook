@@ -29,6 +29,7 @@
     "focusable": true
   },
   "capabilities": {
-    "windows": true
+    "windows": true,
+    "statusBar": true
   }
 }
