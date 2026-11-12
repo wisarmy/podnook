@@ -74,7 +74,11 @@ pub fn settings() -> impl IntoElement {
         recording.set(false);
         match result {
             Some(key) => {
-                if crate::register_hotkey(&key) {
+                if crate::register_hotkey_with(&key, move |ok| {
+                    if !ok {
+                        show_notice(notice, "被其他 App 占用，换一个组合");
+                    }
+                }) {
                     hotkey.set(key.clone());
                     if let Some(store) = &store_for_poll {
                         prefs::write(store, SETTING_HOTKEY, &key);

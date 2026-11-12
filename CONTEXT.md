@@ -42,7 +42,7 @@ v0.1 只做剪贴板历史；Podnook 之后可以长成「多功能个人工具�
 - **技术栈：Native Shell（NSH）v0.5.0 + 纯 Rust。** 无 TSX、无 QuickJS。详见 `docs/adr/0001-nsh-pure-rust.md`。
 - **系统集成在 Rust 侧自己补**：NSH 不提供剪贴板监听、按键注入、开机自启、SQLite——分别用 `NSPasteboard` 轮询、`CGEventPost`、`SMAppService`、`rusqlite`。
 - **界面中文，深色默认跟随系统**；文案集中在组件层，暂不做 i18n 框架。
-- **默认呼出热键 ⌥⌘V**（NSH keystroke 写作 `alt+mod+v`），可配置。不用 ⌘⇧V，避免独占各 App 的「粘贴为纯文本」。
+- **默认呼出热键 ⌘⇧V**（NSH keystroke 写作 `mod+shift+v`），可在设置里按组合键录制修改。全局热键是独占的：若被 Raycast 等 App 占用会注册失败，设置会提示换一个。
 - **数据本地持久化**：`rusqlite`（`history.db`）+ 图片文件缓存；默认保留 1000 条或 30 天，pin 永不过期。
 - **窗口形态**：无边框（`frame: "none"`）+ 透明 + 14pt 圆角 + 系统阴影；顶部栏作为拖动区域，不显示系统标题栏。
 - **设置**：标准设置窗口（`⌘,` 或托盘菜单），设置存 SQLite `settings` 表；保留期、忽略 App 由采集线程实时读取。

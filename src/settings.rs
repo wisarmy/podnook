@@ -6,7 +6,7 @@ use podnook_core::{
 };
 
 /// 默认呼出热键。
-pub const DEFAULT_HOTKEY: &str = "alt+mod+v";
+pub const DEFAULT_HOTKEY: &str = "mod+shift+v";
 
 #[derive(Debug, Clone)]
 pub struct Settings {
@@ -34,11 +34,15 @@ pub fn load(store: Option<&Store>) -> Settings {
         return Settings::default();
     };
     Settings {
-        hotkey: store
-            .get_setting(SETTING_HOTKEY)
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| DEFAULT_HOTKEY.to_string()),
+        hotkey: match store.get_setting(SETTING_HOTKEY).ok().flatten() {
+            None => DEFAULT_HOTKEY.to_string(),
+            // v0.1 早期默认是 ⌥⌘V，迁移到 ⌘⇧V。
+            Some(value) if value == "alt+mod+v" => {
+                let _ = store.set_setting(SETTING_HOTKEY, DEFAULT_HOTKEY);
+                DEFAULT_HOTKEY.to_string()
+            }
+            Some(value) => value,
+        },
         retention_count: read_i64(store, SETTING_RETENTION_COUNT, 1000),
         retention_days: read_i64(store, SETTING_RETENTION_DAYS, 30),
         auto_paste: read_bool(store, SETTING_AUTO_PASTE, true),

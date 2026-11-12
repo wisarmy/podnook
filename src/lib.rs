@@ -164,6 +164,14 @@ pub fn suspend_hotkey() {
 
 /// 注册呼出热键（先清掉旧的）。返回 keystroke 是否合法。
 pub fn register_hotkey(keystroke: &str) -> bool {
+    register_hotkey_with(keystroke, |_| {})
+}
+
+/// 注册呼出热键，并在系统答复「是否被其他 App 占用」时回调。
+pub fn register_hotkey_with(
+    keystroke: &str,
+    on_result: impl Fn(bool) + 'static,
+) -> bool {
     if !matches!(os(), Os::MacOs) {
         return false;
     }
@@ -174,9 +182,11 @@ pub fn register_hotkey(keystroke: &str) -> bool {
     let taken = register_global_shortcut(keystroke, show_panel);
     let label = keystroke.to_string();
     spawn(async move {
-        if !taken.await {
+        let ok = taken.await;
+        if !ok {
             log::warn!("{label} is taken by another app");
         }
+        on_result(ok);
     });
     true
 }
