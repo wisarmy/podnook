@@ -14,6 +14,7 @@ use jiff::tz::TimeZone;
 use nsh_base::input;
 use nsh_core::keymap::When;
 use nsh_core::prelude::*;
+use nsh_core::PressEvent;
 use podnook_core::db::Store;
 use podnook_core::{hash_text, Clip, ClipKind, SETTING_AUTO_PASTE};
 
@@ -522,6 +523,7 @@ fn sidebar(state: State) -> impl IntoElement {
                         ),
                         Row::Clip(clip) => {
                             let id = clip.id;
+                            let row_state = state.clone();
                             view()
                                 .flex_row()
                                 .items_center()
@@ -537,7 +539,14 @@ fn sidebar(state: State) -> impl IntoElement {
                                         theme::surface()
                                     }
                                 })
-                                .on_press(move || selected.set(Some(id)))
+                                .on_press(move |event: &PressEvent| {
+                                    selected.set(Some(id));
+                                    if event.clicks >= 2 {
+                                        if let Some(store) = crate::history::init() {
+                                            activate_selected(&row_state, Some(store.as_ref()), true);
+                                        }
+                                    }
+                                })
                                 .child(icon_box(&clip))
                                 .child(
                                     view().flex_1().child(
@@ -776,6 +785,7 @@ fn footer_inner(state: State) -> impl IntoElement {
             .child(hint("固定", key_label("mod+p")))
             .child(hint("删除", key_label("backspace"))),
     };
+    right = right.child(settings_button());
 
     view()
         .flex_row()
@@ -798,6 +808,22 @@ fn footer_inner(state: State) -> impl IntoElement {
                 ),
         )
         .child(right)
+}
+
+fn settings_button() -> View {
+    view()
+        .on_press(|| crate::open_settings())
+        .px_2()
+        .py_1()
+        .rounded(px(5.0))
+        .bg(theme::card())
+        .border_1()
+        .border_color(theme::border())
+        .child(
+            text("设置")
+                .text_size(px(11.0))
+                .text_color(theme::muted_fg()),
+        )
 }
 
 fn hint(label: &'static str, key: String) -> impl IntoElement {

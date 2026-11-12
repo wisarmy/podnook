@@ -17,6 +17,7 @@ pub fn settings() -> impl IntoElement {
     let config = prefs::load(store.as_deref());
 
     let hotkey = signal(config.hotkey.clone());
+    let hotkey_input = signal(config.hotkey.clone());
     let count = signal(config.retention_count);
     let days = signal(config.retention_days);
     let auto_paste = signal(config.auto_paste);
@@ -38,6 +39,7 @@ pub fn settings() -> impl IntoElement {
             move || hotkey.get() == key,
             move || {
                 hotkey.set(key.to_string());
+                hotkey_input.set(key.to_string());
                 if let Some(store) = &store {
                     prefs::write(store, SETTING_HOTKEY, key);
                 }
@@ -46,6 +48,32 @@ pub fn settings() -> impl IntoElement {
             },
         ));
     }
+
+    let store_for_custom = store.clone();
+    let custom_row = view()
+        .flex_row()
+        .items_center()
+        .gap_2()
+        .child(
+            input()
+                .w(px(190.0))
+                .value(hotkey_input)
+                .on_change(move |value: &str| hotkey_input.set(value.to_string()))
+                .placeholder("alt+mod+v")
+                .text_size(px(12.0)),
+        )
+        .child(choice("应用", || false, move || {
+            let value = hotkey_input.get().trim().to_string();
+            if !crate::register_hotkey(&value) {
+                show_notice(notice, "格式无效，例如 alt+mod+v");
+                return;
+            }
+            hotkey.set(value.clone());
+            if let Some(store) = &store_for_custom {
+                prefs::write(store, SETTING_HOTKEY, &value);
+            }
+            show_notice(notice, "已应用");
+        }));
 
     // 保留条数
     let mut count_row = view().flex_row().items_center().gap_2();
@@ -308,7 +336,15 @@ pub fn settings() -> impl IntoElement {
                 .gap_5()
                 .child(settings_section(
                     "呼出",
-                    view().flex_col().child(setting_row("呼出热键", hotkey_row)),
+                    view()
+                        .flex_col()
+                        .child(setting_row("呼出热键", hotkey_row))
+                        .child(setting_row("自定义", custom_row))
+                        .child(view().px_4().pb_3().child(
+                            text("格式：alt+mod+v、ctrl+shift+space；建议至少包含 mod 或 ctrl。")
+                                .text_size(px(11.0))
+                                .text_color(theme::muted_fg()),
+                        )),
                 ))
                 .child(settings_section("历史", history_rows))
                 .child(settings_section("粘贴", paste_rows))

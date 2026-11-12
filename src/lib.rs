@@ -125,7 +125,12 @@ fn setup_system() {
 
     let store = crate::history::init();
     let config = crate::settings::load(store.as_deref());
-    register_hotkey(&config.hotkey);
+    let configured = if nsh_core::keymap::Keystroke::parse(&config.hotkey, Os::MacOs).is_ok() {
+        config.hotkey.as_str()
+    } else {
+        settings::DEFAULT_HOTKEY
+    };
+    register_hotkey(configured);
     on_key("mod+,", |_| open_settings());
 
     set_tray(
@@ -145,16 +150,14 @@ fn setup_system() {
 }
 
 
-/// 注册呼出热键（先清掉旧的）。只接受预设列表里的键，避免无效 keystroke 触发 panic。
-pub fn register_hotkey(keystroke: &str) {
+/// 注册呼出热键（先清掉旧的）。返回 keystroke 是否合法。
+pub fn register_hotkey(keystroke: &str) -> bool {
     if !matches!(os(), Os::MacOs) {
-        return;
+        return false;
     }
-    let keystroke = if settings::HOTKEYS.contains(&keystroke) {
-        keystroke
-    } else {
-        settings::DEFAULT_HOTKEY
-    };
+    if nsh_core::keymap::Keystroke::parse(keystroke, Os::MacOs).is_err() {
+        return false;
+    }
     unregister_all_global_shortcuts();
     let taken = register_global_shortcut(keystroke, show_panel);
     let label = keystroke.to_string();
@@ -163,6 +166,7 @@ pub fn register_hotkey(keystroke: &str) {
             log::warn!("{label} is taken by another app");
         }
     });
+    true
 }
 
 /// 打开（或聚焦）设置窗口。

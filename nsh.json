@@ -27,5 +27,8 @@
     "closeOnPress": false,
     "activate": true,
     "focusable": true
+  },
+  "capabilities": {
+    "windows": true
   }
 }
