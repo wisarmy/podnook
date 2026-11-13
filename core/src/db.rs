@@ -86,6 +86,10 @@ impl Store {
 
     /// 测试用：内存库。
     pub fn open_in_memory(dir: PathBuf) -> rusqlite::Result<Self> {
+        // 图片条目会把 PNG 写到 dir/images；内存库也要有目录。
+        std::fs::create_dir_all(dir.join("images")).map_err(|e| {
+            rusqlite::Error::InvalidParameterName(format!("create data dir: {e}"))
+        })?;
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA)?;
         Ok(Self {
@@ -302,6 +306,17 @@ impl Store {
         rows.collect()
     }
 
+    /// 修正图片条目的尺寸（迁移旧的像素尺寸到逻辑点数）。
+    pub fn set_image_dimensions(&self, id: i64, width: u32, height: u32) -> rusqlite::Result<()> {
+        let preview = preview_for_image(Some((width, height)));
+        let conn = self.lock();
+        conn.execute(
+            "UPDATE clips SET image_w = ?1, image_h = ?2, preview = ?3 WHERE id = ?4",
+            params![width as i64, height as i64, preview, id],
+        )?;
+        Ok(())
+    }
+
     /// 设置/取消 pin。
     pub fn set_pinned(&self, id: i64, pinned: bool) -> rusqlite::Result<()> {
         let conn = self.lock();
@@ -491,6 +506,31 @@ mod tests {
         assert_eq!(rows[0].preview, "a.txt 等 2 个文件");
         assert_eq!(rows[0].byte_size, 42);
         assert_eq!(rows[1].kind, ClipKind::Link);
+    }
+
+    #[test]
+    fn corrects_image_dimensions_and_preview() {
+        let store = store();
+        store
+            .capture(
+                Snapshot {
+                    image_png: Some(vec![1, 2, 3]),
+                    image_size: Some((998, 762)),
+                    ..Default::default()
+                },
+                1,
+            )
+            .unwrap();
+
+        let row = store.list(1).unwrap().remove(0);
+        assert_eq!(row.preview, "图片 998×762");
+        assert_eq!(row.image_w, Some(998));
+
+        store.set_image_dimensions(row.id, 499, 381).unwrap();
+        let row = store.list(1).unwrap().remove(0);
+        assert_eq!(row.image_w, Some(499));
+        assert_eq!(row.image_h, Some(381));
+        assert_eq!(row.preview, "图片 499×381");
     }
 
     #[test]

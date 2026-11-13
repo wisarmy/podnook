@@ -10,7 +10,7 @@ use nsh_platform_macos::objc2_app_kit::{
     NSPasteboardItem, NSPasteboardType, NSPasteboardTypeFileURL, NSPasteboardTypePNG,
     NSPasteboardTypeString, NSPasteboardTypeTIFF, NSPasteboardWriting, NSWorkspace,
 };
-use nsh_platform_macos::objc2_foundation::{NSArray, NSDictionary, NSString, NSURL};
+use nsh_platform_macos::objc2_foundation::{NSArray, NSData, NSDictionary, NSString, NSURL};
 
 use podnook_core::Snapshot;
 
@@ -155,10 +155,27 @@ fn image_png(pasteboard: &NSPasteboard) -> Option<(Vec<u8>, (u32, u32))> {
 }
 
 fn size_of(rep: &NSBitmapImageRep) -> (u32, u32) {
-    (
-        rep.pixelsWide().max(0) as u32,
-        rep.pixelsHigh().max(0) as u32,
-    )
+    // 用点（逻辑尺寸）而不是像素：Retina 图片的 PNG 是 2x，
+    // Raycast/Finder 显示的是 499×381 而不是 998×762。
+    let size = rep.size();
+    let width = size.width.round();
+    let height = size.height.round();
+    if width > 0.0 && height > 0.0 {
+        (width as u32, height as u32)
+    } else {
+        (
+            rep.pixelsWide().max(0) as u32,
+            rep.pixelsHigh().max(0) as u32,
+        )
+    }
+}
+
+/// 读取缓存 PNG 的逻辑尺寸（点），用于修复旧条目的像素尺寸。
+pub fn image_file_size(path: &str) -> Option<(u32, u32)> {
+    let bytes = std::fs::read(path).ok()?;
+    let data = NSData::with_bytes(&bytes);
+    let rep = NSBitmapImageRep::initWithData(NSBitmapImageRep::alloc(), &data)?;
+    Some(size_of(&rep))
 }
 
 /// 把一个或多个文件写回系统剪贴板（`public.file-url` 条目）。

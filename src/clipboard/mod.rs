@@ -4,7 +4,7 @@
 
 mod macos;
 
-pub use macos::write_files;
+pub use macos::{image_file_size, write_files};
 
 use std::sync::{Arc, Once};
 use std::thread;

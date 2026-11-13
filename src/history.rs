@@ -30,6 +30,42 @@ pub fn generation() -> u64 {
     GENERATION.load(Ordering::Relaxed)
 }
 
+/// 旧版本把 Retina 图片的像素尺寸当成了显示尺寸（998×762 而不是 499×381）。
+/// 缓存 PNG 里有 DPI 信息，启动时读一次修正历史条目。
+#[cfg(target_os = "macos")]
+fn migrate_image_dimensions(store: &Store) {
+    use podnook_core::ClipKind;
+
+    const KEY: &str = "image_dimensions_points_v1";
+    if matches!(store.get_setting(KEY), Ok(Some(_))) {
+        return;
+    }
+
+    let mut changed = 0;
+    if let Ok(clips) = store.list(5000) {
+        for clip in clips {
+            if clip.kind != ClipKind::Image {
+                continue;
+            }
+            let Some(path) = clip.image_path.as_deref() else {
+                continue;
+            };
+            let Some((width, height)) = crate::clipboard::image_file_size(path) else {
+                continue;
+            };
+            if clip.image_w != Some(width as i64) || clip.image_h != Some(height as i64) {
+                if store.set_image_dimensions(clip.id, width, height).is_ok() {
+                    changed += 1;
+                }
+            }
+        }
+    }
+    if changed > 0 {
+        log::info!("migrated {changed} image dimensions from pixels to points");
+    }
+    let _ = store.set_setting(KEY, "1");
+}
+
 /// 打开（或复用）全局历史库。没有数据目录时返回 `None`。
 pub fn init() -> Option<Arc<Store>> {
     STORE
@@ -37,7 +73,10 @@ pub fn init() -> Option<Arc<Store>> {
             Some(dir) => match Store::open(&dir) {
                 Ok(store) => {
                     log::info!("history database at {}", dir.join("history.db").display());
-                    Some(Arc::new(store))
+                    let store = Arc::new(store);
+                    #[cfg(target_os = "macos")]
+                    migrate_image_dimensions(&store);
+                    Some(store)
                 }
                 Err(e) => {
                     log::error!("open history database: {e}");
