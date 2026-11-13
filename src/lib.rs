@@ -18,7 +18,7 @@ mod ui;
 use std::cell::RefCell;
 use std::time::Duration;
 
-use nsh_core::desktop::{WindowAttributes, WindowFrameStyle, WindowKind, WindowLevel};
+use nsh_core::desktop::{WindowAttributes, WindowFrameStyle, WindowKind, WindowLevel, Workspaces};
 use nsh_core::element::desktop::{
     MenuItem, WindowRef, main_window, open_window, quit, register_global_shortcut, set_tray, tray,
     unregister_all_global_shortcuts, window as panel_window,
@@ -60,6 +60,8 @@ fn panel_attributes() -> WindowAttributes {
     attributes.transparent = Some(true);
     attributes.shadow = Some(true);
     attributes.level = Some(WindowLevel::Floating);
+    // 加入所有 Space（含其他 App 的全屏空间），热键在全屏里也能直接呼出。
+    attributes.workspaces = Some(Workspaces::All);
     attributes.activate = Some(false);
     attributes.focusable = Some(true);
     attributes.close_on_press = Some(false);
@@ -215,6 +217,7 @@ pub fn open_settings() {
             // 之前失去焦点时降到了普通层级，先浮起来再聚焦。
             let mut attributes = WindowAttributes::default();
             attributes.level = Some(WindowLevel::Floating);
+            attributes.workspaces = Some(Workspaces::All);
             window.set(attributes);
             window.focus();
             let refocus = window.clone();
@@ -229,6 +232,7 @@ pub fn open_settings() {
     attributes.resizable = Some(false);
     attributes.close_on_escape = Some(true);
     attributes.level = Some(WindowLevel::Floating);
+    attributes.workspaces = Some(Workspaces::All);
 
     let window = panel_window()
         .id("settings")
@@ -248,6 +252,12 @@ pub fn open_settings() {
                 WindowLevel::Floating
             } else {
                 WindowLevel::Normal
+            });
+            // 浮层时跟随所有 Space；失焦变成普通窗口后只留在当前 Space。
+            attributes.workspaces = Some(if focused {
+                Workspaces::All
+            } else {
+                Workspaces::Current
             });
             settings.set(attributes);
         });
