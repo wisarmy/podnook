@@ -60,8 +60,6 @@ fn panel_attributes() -> WindowAttributes {
     attributes.transparent = Some(true);
     attributes.shadow = Some(true);
     attributes.level = Some(WindowLevel::Floating);
-    // 加入所有 Space（含其他 App 的全屏空间），热键在全屏里也能直接呼出。
-    attributes.workspaces = Some(Workspaces::All);
     attributes.activate = Some(false);
     attributes.focusable = Some(true);
     attributes.close_on_press = Some(false);
@@ -69,6 +67,30 @@ fn panel_attributes() -> WindowAttributes {
     attributes.resizable = Some(true);
     attributes.min_size = Some(Some(size(px(720.0), px(480.0))));
     attributes
+}
+
+/// 让浮层窗口只跟随当前 Space（呼出时移动过去），而不是加入所有 Space。
+/// NSH 的 Workspaces 枚举表达不了 `MoveToActiveSpace + FullScreenAuxiliary`，
+/// 这里直接调 AppKit：既能覆盖其他 App 的全屏空间，又不会在切 Space 时露一下。
+#[cfg(target_os = "macos")]
+fn apply_window_behavior() {
+    let _ = nsh_core::element::run_on_main_thread(|| {
+        use nsh_platform_macos::objc2::MainThreadMarker;
+        use nsh_platform_macos::objc2_app_kit::{NSApplication, NSWindowCollectionBehavior};
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        let app = NSApplication::sharedApplication(mtm);
+        let behavior = NSWindowCollectionBehavior::MoveToActiveSpace
+            | NSWindowCollectionBehavior::FullScreenAuxiliary
+            | NSWindowCollectionBehavior::IgnoresCycle;
+        for window in app.windows().iter() {
+            let title = window.title().to_string();
+            if title == "Podnook" || title == "Podnook 设置" {
+                window.setCollectionBehavior(behavior);
+            }
+        }
+    });
 }
 
 fn open_panel_once() {
@@ -94,6 +116,8 @@ fn open_panel_once() {
                 }
             });
             PANEL.with(|panel| *panel.borrow_mut() = Some(window));
+            apply_window_behavior();
+            set_timeout(Duration::from_millis(300), apply_window_behavior);
         }
         None => log::error!("could not open the Podnook panel"),
     }
@@ -101,6 +125,8 @@ fn open_panel_once() {
 
 /// 呼出面板：记住当前前台 App（粘回时还给它），再让面板拿到键盘。
 pub fn show_panel() {
+    #[cfg(target_os = "macos")]
+    apply_window_behavior();
     #[cfg(target_os = "macos")]
     crate::paste::remember_frontmost();
     // 同一时间只显示 Podnook 的一个窗口：呼出剪贴板时收起设置。
@@ -222,6 +248,8 @@ pub fn open_settings() {
             window.focus();
             let refocus = window.clone();
             set_timeout(Duration::from_millis(150), move || refocus.focus());
+            apply_window_behavior();
+            set_timeout(Duration::from_millis(80), apply_window_behavior);
             return;
         }
     }
@@ -260,11 +288,17 @@ pub fn open_settings() {
                 Workspaces::Current
             });
             settings.set(attributes);
+            if focused {
+                apply_window_behavior();
+                set_timeout(Duration::from_millis(80), apply_window_behavior);
+            }
         });
         window.focus();
         // 面板刚收起时焦点会掉；等窗口真正上屏后再聚焦一次。
         let refocus = window.clone();
         set_timeout(Duration::from_millis(150), move || refocus.focus());
         SETTINGS_WINDOW.with(|slot| *slot.borrow_mut() = Some(window));
+        apply_window_behavior();
+        set_timeout(Duration::from_millis(80), apply_window_behavior);
     }
 }
