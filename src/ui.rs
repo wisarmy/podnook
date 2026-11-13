@@ -16,7 +16,7 @@ use nsh_core::keymap::When;
 use nsh_core::prelude::*;
 use nsh_core::PressEvent;
 use podnook_core::db::Store;
-use podnook_core::{hash_text, Clip, ClipKind, SETTING_AUTO_PASTE};
+use podnook_core::{hash_text, now_secs, Clip, ClipKind, SETTING_AUTO_PASTE};
 
 use crate::theme;
 
@@ -36,7 +36,10 @@ pub fn prepare_for_show() {
         if let Some(state) = slot.borrow().as_ref() {
             state.query.set(String::new());
             state.selected.set(None);
-            state.confirm_clear.set(false);
+            state.actions_open.set(false);
+            state.actions_mode.set(ActionMode::Main);
+            state.actions_query.set(String::new());
+            state.actions_selected.set(0);
         }
     });
     SEARCH.with(|search| {
@@ -53,9 +56,13 @@ struct State {
     filter: Signal<Option<ClipKind>>,
     selected: Signal<Option<i64>>,
     flash: Signal<Option<String>>,
-    confirm_clear: Signal<bool>,
     search: ElementRef,
     rows: Memo<Vec<Row>>,
+    actions_open: Signal<bool>,
+    actions_mode: Signal<ActionMode>,
+    actions_query: Signal<String>,
+    actions_selected: Signal<usize>,
+    actions_search: ElementRef,
 }
 
 #[derive(Clone, PartialEq)]
@@ -64,6 +71,42 @@ enum Row {
     Clip(Clip),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ActionMode {
+    Main,
+    Range,
+    ConfirmAll,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ActionKind {
+    Paste,
+    Copy,
+    Pin,
+    Delete,
+    DeleteEntries,
+    DeleteAll,
+    DeleteRange(i64),
+    Back,
+    ConfirmDeleteAll,
+}
+
+#[derive(Clone)]
+struct ActionItem {
+    kind: ActionKind,
+    label: String,
+    shortcut: &'static str,
+    destructive: bool,
+}
+
+const DELETE_RANGES: &[(i64, &str)] = &[
+    (5 * 60, "最近 5 分钟"),
+    (15 * 60, "最近 15 分钟"),
+    (30 * 60, "最近 30 分钟"),
+    (60 * 60, "最近 1 小时"),
+    (24 * 60 * 60, "最近 24 小时"),
+];
+
 /// 整个应用的骨架。
 pub fn shell() -> impl IntoElement {
     let clips = signal(Vec::<Clip>::new());
@@ -71,9 +114,9 @@ pub fn shell() -> impl IntoElement {
     let filter = signal(None::<ClipKind>);
     let selected = signal(None::<i64>);
     let flash = signal(None::<String>);
-    let confirm_clear = signal(false);
     let rows = computed(move || build_rows(&clips.get(), &query.get(), filter.get()));
     let search = element_ref();
+    let actions_search = element_ref();
     SEARCH.with(|slot| *slot.borrow_mut() = Some(search));
     let state = State {
         clips,
@@ -81,9 +124,13 @@ pub fn shell() -> impl IntoElement {
         filter,
         selected,
         flash,
-        confirm_clear,
         search,
         rows,
+        actions_open: signal(false),
+        actions_mode: signal(ActionMode::Main),
+        actions_query: signal(String::new()),
+        actions_selected: signal(0usize),
+        actions_search,
     };
     STATE.with(|slot| *slot.borrow_mut() = Some(state.clone()));
 
@@ -99,6 +146,20 @@ pub fn shell() -> impl IntoElement {
         let current = sel.selected.get();
         if !current.is_some_and(|id| ids.contains(&id)) {
             sel.selected.set(ids.first().copied());
+        }
+    });
+
+    // 操作列表过滤后，选中项不能越界。
+    let act = state.clone();
+    effect(move || {
+        let len = action_items(&act).len();
+        let selected = act.actions_selected.get();
+        if len == 0 {
+            if selected != 0 {
+                act.actions_selected.set(0);
+            }
+        } else if selected >= len {
+            act.actions_selected.set(len - 1);
         }
     });
 
@@ -137,6 +198,150 @@ fn shell_view(state: State) -> impl IntoElement {
                 .child(preview_pane(state.clone())),
         )
         .child(footer(state.clone()))
+        .child(actions_overlay(state.clone()))
+}
+
+fn actions_overlay(state: State) -> impl IntoElement {
+    dynamic(move || actions_overlay_inner(state.clone()))
+}
+
+fn actions_overlay_inner(state: State) -> View {
+    if !state.actions_open.get() {
+        return view();
+    }
+    let title = match state.actions_mode.get() {
+        ActionMode::Main => "操作",
+        ActionMode::Range => "删除最近…",
+        ActionMode::ConfirmAll => "清空全部",
+    };
+    let selected = state.actions_selected.get();
+    let items = action_items(&state);
+
+    let mut list = view().flex_col().gap_1().p_2().overflow_hidden();
+    if items.is_empty() {
+        list = list.child(
+            text("没有匹配的操作")
+                .p_3()
+                .text_size(px(12.0))
+                .text_color(theme::muted_fg()),
+        );
+    }
+    for (index, item) in items.into_iter().enumerate() {
+        list = list.child(action_row(state.clone(), item, index == selected));
+    }
+
+    let backdrop_state = state.clone();
+    let search_ref = state.actions_search;
+    let query = state.actions_query;
+    let change_state = state.clone();
+    let escape_state = state.clone();
+
+    view()
+        .absolute()
+        .inset(px(0.0))
+        .z_index(40)
+        .child(
+            view()
+                .absolute()
+                .inset(px(0.0))
+                .on_press(move || close_actions(&backdrop_state)),
+        )
+        .child(
+            view()
+                .absolute()
+                .top(px(64.0))
+                .right(px(20.0))
+                .w(px(360.0))
+                .max_h(px(520.0))
+                .z_index(41)
+                .flex_col()
+                .rounded(px(12.0))
+                .bg(theme::surface())
+                .border_1()
+                .border_color(theme::border())
+                .shadow_lg()
+                .overflow_hidden()
+                .child(
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .justify_between()
+                        .px_4()
+                        .py_3()
+                        .border_b(px(1.0))
+                        .border_b_color(theme::border())
+                        .child(text(title).text_size(px(12.0)).text_color(theme::muted_fg()))
+                        .child(text("⌘K 关闭").text_size(px(11.0)).text_color(theme::muted_fg())),
+                )
+                .child(list)
+                .child(
+                    view()
+                        .px_3()
+                        .py_2()
+                        .border_t(px(1.0))
+                        .border_t_color(theme::border())
+                        .child(
+                            input()
+                                .element_ref(&search_ref)
+                                .value(query)
+                                .on_change(move |value: &str| {
+                                    change_state.actions_query.set(value.to_string());
+                                    change_state.actions_selected.set(0);
+                                })
+                                .on_key_press(move |key: &str| {
+                                    if key == "Escape" {
+                                        close_actions(&escape_state);
+                                    }
+                                })
+                                .placeholder("搜索操作…")
+                                .text_size(px(12.0)),
+                        ),
+                ),
+        )
+}
+
+fn action_row(state: State, item: ActionItem, selected: bool) -> View {
+    let store = crate::history::init();
+    let kind = item.kind;
+    let label = item.label;
+    let shortcut = item.shortcut;
+    let destructive = item.destructive;
+
+    let mut row = view()
+        .flex_row()
+        .items_center()
+        .justify_between()
+        .px_3()
+        .py_2()
+        .rounded(px(8.0))
+        .bg(move || {
+            if selected {
+                theme::accent()
+            } else {
+                theme::surface()
+            }
+        })
+        .on_press(move || {
+            let store = store.clone();
+            run_action(&state, store.as_deref(), kind);
+        })
+        .child(
+            text(label)
+                .text_size(px(13.0))
+                .text_color(if destructive {
+                    theme::danger()
+                } else {
+                    theme::fg()
+                }),
+        );
+    if !shortcut.is_empty() {
+        row = row.child(
+            text(key_label(shortcut))
+                .text_size(px(11.0))
+                .text_color(theme::muted_fg()),
+        );
+    }
+    row
 }
 
 // ---------------------------------------------------------------- 数据
@@ -250,57 +455,275 @@ fn human_size(bytes: i64) -> String {
 // ---------------------------------------------------------------- 交互
 
 fn bind_keys(state: &State, store: Option<Arc<Store>>) {
-    // 搜索框一直有焦点，方向键和回车必须仍然可用（输入框自己不使用它们）。
+    // 搜索框一直有焦点，方向键、回车等必须仍然可用。
     let always = || KeyOptions {
         when: When::Always,
         ..KeyOptions::default()
     };
+
     let s = state.clone();
-    on_key_with("down", always(), move |_| move_selection(&s, 1));
+    on_key_with("down", always(), move |_| {
+        if s.actions_open.get() {
+            move_action(&s, 1);
+        } else {
+            move_selection(&s, 1);
+        }
+    });
     let s = state.clone();
-    on_key_with("up", always(), move |_| move_selection(&s, -1));
+    on_key_with("up", always(), move |_| {
+        if s.actions_open.get() {
+            move_action(&s, -1);
+        } else {
+            move_selection(&s, -1);
+        }
+    });
     let s = state.clone();
     let db = store.clone();
-    on_key_with("enter", always(), move |_| activate_selected(&s, db.as_deref(), true));
+    on_key_with("enter", always(), move |_| {
+        if s.actions_open.get() {
+            let items = action_items(&s);
+            if let Some(item) = items.get(s.actions_selected.get()).cloned() {
+                let store = crate::history::init();
+                run_action(&s, store.as_deref(), item.kind);
+            }
+        } else {
+            activate_selected(&s, db.as_deref(), true);
+        }
+    });
     let s = state.clone();
     let db = store.clone();
-    on_key_with("mod+enter", always(), move |_| activate_selected(&s, db.as_deref(), false));
-    // Raycast 对齐：⌘. 固定，⌘P 切换类型筛选。
+    on_key_with("mod+enter", always(), move |_| {
+        activate_selected(&s, db.as_deref(), false)
+    });
+    // Raycast 对齐：固定是 ⇧⌘P；⌘. 留给 Append to Clipboard。
     let s = state.clone();
     let db = store.clone();
-    on_key_with("mod+.", always(), move |_| toggle_pin(&s, db.as_deref()));
+    on_key_with("shift+mod+p", always(), move |_| {
+        toggle_pin(&s, db.as_deref());
+        if s.actions_open.get() {
+            close_actions(&s);
+        }
+    });
     let s = state.clone();
     on_key_with("mod+p", always(), move |_| cycle_filter(&s));
     // Raycast 对齐：⌃X 删除当前条目。
     let s = state.clone();
     let db = store.clone();
-    on_key_with("ctrl+x", always(), move |_| delete_selected(&s, db.as_deref()));
-    // ⇧⌘X 批量删除：第一次提示，3 秒内再按一次才清空（含固定项）。
+    on_key_with("ctrl+x", always(), move |_| {
+        delete_selected(&s, db.as_deref());
+        if s.actions_open.get() {
+            close_actions(&s);
+        }
+    });
+    // ⇧⌘X 打开「删除最近…」，⌃⇧X 打开「清空全部」确认。
     let s = state.clone();
     on_key_with("shift+mod+x", always(), move |_| {
-        if s.confirm_clear.get() {
-            s.confirm_clear.set(false);
-            let Some(store) = crate::history::init() else {
-                return;
-            };
-            match store.clear_history() {
-                Ok(_) => {
-                    crate::history::bump();
-                    reload(&s, store.as_ref());
-                    flash(&s, "已清空历史");
-                }
-                Err(e) => log::error!("clear history: {e}"),
-            }
+        enter_action_mode(&s, ActionMode::Range)
+    });
+    let s = state.clone();
+    on_key_with("ctrl+shift+x", always(), move |_| {
+        enter_action_mode(&s, ActionMode::ConfirmAll)
+    });
+    let s = state.clone();
+    on_key_with("mod+k", always(), move |_| {
+        if s.actions_open.get() {
+            close_actions(&s);
         } else {
-            s.confirm_clear.set(true);
-            flash(&s, "再按 ⇧⌘X 清空全部历史（含固定）");
-            let s = s.clone();
-            set_timeout(Duration::from_secs(3), move || s.confirm_clear.set(false));
+            enter_action_mode(&s, ActionMode::Main);
+        }
+    });
+    let s = state.clone();
+    on_key_with("escape", always(), move |_| {
+        if s.actions_open.get() {
+            close_actions(&s);
+        } else {
+            crate::hide_panel();
         }
     });
     on_key("mod+,", |_| crate::open_settings());
-    // 搜索框聚焦时 Esc 由输入框的 on_key_press 处理，这里是焦点不在输入框时的兜底。
-    on_key("escape", |_| crate::hide_panel());
+}
+
+fn enter_action_mode(state: &State, mode: ActionMode) {
+    state.actions_mode.set(mode);
+    state.actions_query.set(String::new());
+    state.actions_selected.set(0);
+    if !state.actions_open.get() {
+        state.actions_open.set(true);
+    }
+    let search = state.actions_search;
+    set_timeout(Duration::from_millis(30), move || search.focus());
+}
+
+fn close_actions(state: &State) {
+    state.actions_open.set(false);
+    state.actions_mode.set(ActionMode::Main);
+    state.actions_query.set(String::new());
+    state.actions_selected.set(0);
+    let search = state.search;
+    set_timeout(Duration::from_millis(30), move || search.focus());
+}
+
+fn move_action(state: &State, delta: isize) {
+    let len = action_items(state).len();
+    if len == 0 {
+        return;
+    }
+    let current = state.actions_selected.get().min(len - 1) as isize;
+    let next = (current + delta).clamp(0, len as isize - 1) as usize;
+    state.actions_selected.set(next);
+}
+
+fn action_items(state: &State) -> Vec<ActionItem> {
+    let pin_label = match selected_clip(state) {
+        Some(clip) if clip.pinned => "取消固定",
+        _ => "固定",
+    };
+
+    let mut items = match state.actions_mode.get() {
+        ActionMode::Range => DELETE_RANGES
+            .iter()
+            .map(|(seconds, label)| ActionItem {
+                kind: ActionKind::DeleteRange(*seconds),
+                label: (*label).to_string(),
+                shortcut: "",
+                destructive: true,
+            })
+            .collect::<Vec<_>>(),
+        ActionMode::ConfirmAll => vec![
+            ActionItem {
+                kind: ActionKind::ConfirmDeleteAll,
+                label: "确认清空全部历史（含固定）".into(),
+                shortcut: "enter",
+                destructive: true,
+            },
+            ActionItem {
+                kind: ActionKind::Back,
+                label: "取消".into(),
+                shortcut: "escape",
+                destructive: false,
+            },
+        ],
+        ActionMode::Main => vec![
+            ActionItem {
+                kind: ActionKind::Paste,
+                label: "粘贴".into(),
+                shortcut: "enter",
+                destructive: false,
+            },
+            ActionItem {
+                kind: ActionKind::Copy,
+                label: "仅复制".into(),
+                shortcut: "mod+enter",
+                destructive: false,
+            },
+            ActionItem {
+                kind: ActionKind::Pin,
+                label: pin_label.into(),
+                shortcut: "shift+mod+p",
+                destructive: false,
+            },
+            ActionItem {
+                kind: ActionKind::Delete,
+                label: "删除".into(),
+                shortcut: "ctrl+x",
+                destructive: true,
+            },
+            ActionItem {
+                kind: ActionKind::DeleteEntries,
+                label: "删除最近…".into(),
+                shortcut: "shift+mod+x",
+                destructive: true,
+            },
+            ActionItem {
+                kind: ActionKind::DeleteAll,
+                label: "清空全部…".into(),
+                shortcut: "ctrl+shift+x",
+                destructive: true,
+            },
+        ],
+    };
+
+    if state.actions_mode.get() == ActionMode::Range {
+        items.push(ActionItem {
+            kind: ActionKind::Back,
+            label: "返回".into(),
+            shortcut: "escape",
+            destructive: false,
+        });
+    }
+
+    let query = state.actions_query.get().trim().to_lowercase();
+    if !query.is_empty() {
+        items.retain(|item| item.label.to_lowercase().contains(&query));
+    }
+    items
+}
+
+fn range_label(seconds: i64) -> &'static str {
+    match seconds {
+        300 => "5 分钟",
+        900 => "15 分钟",
+        1800 => "30 分钟",
+        3600 => "1 小时",
+        86400 => "24 小时",
+        _ => "时间范围",
+    }
+}
+
+fn run_action(state: &State, store: Option<&Store>, kind: ActionKind) {
+    match kind {
+        ActionKind::Paste => {
+            state.actions_open.set(false);
+            activate_selected(state, store, true);
+        }
+        ActionKind::Copy => {
+            state.actions_open.set(false);
+            activate_selected(state, store, false);
+        }
+        ActionKind::Pin => {
+            toggle_pin(state, store);
+            close_actions(state);
+        }
+        ActionKind::Delete => {
+            delete_selected(state, store);
+            close_actions(state);
+        }
+        ActionKind::DeleteEntries => enter_action_mode(state, ActionMode::Range),
+        ActionKind::DeleteAll => enter_action_mode(state, ActionMode::ConfirmAll),
+        ActionKind::Back => enter_action_mode(state, ActionMode::Main),
+        ActionKind::DeleteRange(seconds) => {
+            let Some(store) = store else {
+                return;
+            };
+            let cutoff = now_secs() - seconds;
+            match store.delete_since(cutoff) {
+                Ok(count) => {
+                    crate::history::bump();
+                    reload(state, store);
+                    close_actions(state);
+                    flash(
+                        state,
+                        format!("已删除最近 {} 的 {count} 条（固定项保留）", range_label(seconds)),
+                    );
+                }
+                Err(e) => log::error!("delete since: {e}"),
+            }
+        }
+        ActionKind::ConfirmDeleteAll => {
+            let Some(store) = store else {
+                return;
+            };
+            match store.clear_history() {
+                Ok(count) => {
+                    crate::history::bump();
+                    reload(state, store);
+                    close_actions(state);
+                    flash(state, format!("已清空 {count} 条历史"));
+                }
+                Err(e) => log::error!("clear history: {e}"),
+            }
+        }
+    }
 }
 
 fn cycle_filter(state: &State) {
@@ -433,9 +856,9 @@ fn delete_selected(state: &State, store: Option<&Store>) {
     flash(state, "已删除");
 }
 
-fn flash(state: &State, message: &str) {
+fn flash(state: &State, message: impl Into<String>) {
     let flash = state.flash;
-    flash.set(Some(message.to_string()));
+    flash.set(Some(message.into()));
     set_timeout(Duration::from_millis(1400), move || flash.set(None));
 }
 
@@ -484,11 +907,18 @@ fn search_box(state: State) -> impl IntoElement {
                 .placeholder_color(rgb(0x8A8178))
                 .text_color(theme::fg())
                 .text_size(px(14.0))
-                // 输入框聚焦时先吃掉 Esc 并失焦；在这里直接收起面板，
-                // 避免要按两次。
-                .on_key_press(|key: &str| {
-                    if key == "Escape" {
-                        crate::hide_panel();
+                // 输入框聚焦时先吃掉 Esc 并失焦；在这里直接处理，
+                // 避免要按两次。操作面板打开时 Esc 先关面板。
+                .on_key_press({
+                    let state = state.clone();
+                    move |key: &str| {
+                        if key == "Escape" {
+                            if state.actions_open.get() {
+                                close_actions(&state);
+                            } else {
+                                crate::hide_panel();
+                            }
+                        }
                     }
                 })
                 .auto_focus(true),
@@ -825,7 +1255,8 @@ fn footer_inner(state: State) -> impl IntoElement {
         ),
         None => right
             .child(hint("粘贴", key_label("enter")))
-            .child(hint("固定", key_label("mod+.")))
+            .child(hint("操作", key_label("mod+k")))
+            .child(hint("固定", key_label("shift+mod+p")))
             .child(hint("筛选", key_label("mod+p")))
             .child(hint("删除", key_label("ctrl+x"))),
     };

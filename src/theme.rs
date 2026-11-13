@@ -45,6 +45,11 @@ pub fn accent_fg() -> AdaptiveColor {
     AdaptiveColor::rgb(0x3D2E1F, 0xF5EDE3)
 }
 
+/// 危险操作（删除、清空）。
+pub fn danger() -> AdaptiveColor {
+    AdaptiveColor::rgb(0xB5432F, 0xE06A55)
+}
+
 /// 品牌色：一点陶土暖橙。
 pub fn primary() -> AdaptiveColor {
     AdaptiveColor::rgb(0xC4703A, 0xD98A55)

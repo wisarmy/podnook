@@ -387,6 +387,15 @@ impl Store {
             .unwrap_or_default())
     }
 
+    /// 删除 `cutoff` 之后复制的条目（pin 的保留）并删除图片文件。
+    pub fn delete_since(&self, cutoff: i64) -> rusqlite::Result<usize> {
+        self.remove_matching(
+            "SELECT id, image_path FROM clips
+             WHERE pinned = 0 AND last_copied_at >= ?1",
+            params![cutoff],
+        )
+    }
+
     /// 清空全部历史（pin 的也删掉）并删除图片文件。
     pub fn clear_history(&self) -> rusqlite::Result<usize> {
         let conn = self.lock();
@@ -531,6 +540,29 @@ mod tests {
         assert_eq!(row.image_w, Some(499));
         assert_eq!(row.image_h, Some(381));
         assert_eq!(row.preview, "图片 499×381");
+    }
+
+    #[test]
+    fn deletes_recent_entries_but_keeps_pinned() {
+        let store = store();
+        store.capture(text_clip("old"), 100).unwrap();
+        store.capture(text_clip("mid"), 200).unwrap();
+        store.capture(text_clip("new"), 300).unwrap();
+
+        let mid = store
+            .list(10)
+            .unwrap()
+            .into_iter()
+            .find(|clip| clip.preview == "mid")
+            .unwrap();
+        store.set_pinned(mid.id, true).unwrap();
+
+        // 150 之后：mid（pin，保留）和 new（删除）。
+        assert_eq!(store.delete_since(150).unwrap(), 1);
+        let rows = store.list(10).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().any(|clip| clip.preview == "old"));
+        assert!(rows.iter().any(|clip| clip.preview == "mid" && clip.pinned));
     }
 
     #[test]
