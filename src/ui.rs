@@ -36,6 +36,7 @@ pub fn prepare_for_show() {
         if let Some(state) = slot.borrow().as_ref() {
             state.query.set(String::new());
             state.selected.set(None);
+            state.confirm_clear.set(false);
         }
     });
     SEARCH.with(|search| {
@@ -52,6 +53,7 @@ struct State {
     filter: Signal<Option<ClipKind>>,
     selected: Signal<Option<i64>>,
     flash: Signal<Option<String>>,
+    confirm_clear: Signal<bool>,
     search: ElementRef,
     rows: Memo<Vec<Row>>,
 }
@@ -69,6 +71,7 @@ pub fn shell() -> impl IntoElement {
     let filter = signal(None::<ClipKind>);
     let selected = signal(None::<i64>);
     let flash = signal(None::<String>);
+    let confirm_clear = signal(false);
     let rows = computed(move || build_rows(&clips.get(), &query.get(), filter.get()));
     let search = element_ref();
     SEARCH.with(|slot| *slot.borrow_mut() = Some(search));
@@ -78,6 +81,7 @@ pub fn shell() -> impl IntoElement {
         filter,
         selected,
         flash,
+        confirm_clear,
         search,
         rows,
     };
@@ -251,14 +255,6 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
         when: When::Always,
         ..KeyOptions::default()
     };
-    // 搜索框聚焦时 Backspace 默认被输入框吃掉；这里让它先经过应用，
-    // 但仍透传给输入框，保证有查询时正常删字。
-    let always_pass = || KeyOptions {
-        when: When::Always,
-        pass_through: true,
-        ..KeyOptions::default()
-    };
-
     let s = state.clone();
     on_key_with("down", always(), move |_| move_selection(&s, 1));
     let s = state.clone();
@@ -269,20 +265,53 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     let s = state.clone();
     let db = store.clone();
     on_key_with("mod+enter", always(), move |_| activate_selected(&s, db.as_deref(), false));
+    // Raycast 对齐：⌘. 固定，⌘P 切换类型筛选。
     let s = state.clone();
     let db = store.clone();
-    on_key_with("mod+p", always(), move |_| toggle_pin(&s, db.as_deref()));
+    on_key_with("mod+.", always(), move |_| toggle_pin(&s, db.as_deref()));
+    let s = state.clone();
+    on_key_with("mod+p", always(), move |_| cycle_filter(&s));
+    // Raycast 对齐：⌃X 删除当前条目。
     let s = state.clone();
     let db = store.clone();
-    on_key_with("backspace", always_pass(), move |_| {
-        // 查询为空时才删除条目；有查询时交给输入框删字符。
-        if s.query.get().is_empty() {
-            delete_selected(&s, db.as_deref());
+    on_key_with("ctrl+x", always(), move |_| delete_selected(&s, db.as_deref()));
+    // ⇧⌘X 批量删除：第一次提示，3 秒内再按一次才清空（含固定项）。
+    let s = state.clone();
+    on_key_with("shift+mod+x", always(), move |_| {
+        if s.confirm_clear.get() {
+            s.confirm_clear.set(false);
+            let Some(store) = crate::history::init() else {
+                return;
+            };
+            match store.clear_history() {
+                Ok(_) => {
+                    crate::history::bump();
+                    reload(&s, store.as_ref());
+                    flash(&s, "已清空历史");
+                }
+                Err(e) => log::error!("clear history: {e}"),
+            }
+        } else {
+            s.confirm_clear.set(true);
+            flash(&s, "再按 ⇧⌘X 清空全部历史（含固定）");
+            let s = s.clone();
+            set_timeout(Duration::from_secs(3), move || s.confirm_clear.set(false));
         }
     });
     on_key("mod+,", |_| crate::open_settings());
     // 搜索框聚焦时 Esc 由输入框的 on_key_press 处理，这里是焦点不在输入框时的兜底。
     on_key("escape", |_| crate::hide_panel());
+}
+
+fn cycle_filter(state: &State) {
+    let next = match state.filter.get() {
+        None => Some(ClipKind::Text),
+        Some(ClipKind::Text) => Some(ClipKind::Link),
+        Some(ClipKind::Link) => Some(ClipKind::Image),
+        Some(ClipKind::Image) => Some(ClipKind::File),
+        Some(ClipKind::File) => None,
+    };
+    state.filter.set(next);
 }
 
 fn move_selection(state: &State, delta: isize) {
@@ -796,8 +825,9 @@ fn footer_inner(state: State) -> impl IntoElement {
         ),
         None => right
             .child(hint("粘贴", key_label("enter")))
-            .child(hint("固定", key_label("mod+p")))
-            .child(hint("删除", key_label("backspace"))),
+            .child(hint("固定", key_label("mod+.")))
+            .child(hint("筛选", key_label("mod+p")))
+            .child(hint("删除", key_label("ctrl+x"))),
     };
 
     view()
