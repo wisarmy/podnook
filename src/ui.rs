@@ -251,6 +251,13 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
         when: When::Always,
         ..KeyOptions::default()
     };
+    // 搜索框聚焦时 Backspace 默认被输入框吃掉；这里让它先经过应用，
+    // 但仍透传给输入框，保证有查询时正常删字。
+    let always_pass = || KeyOptions {
+        when: When::Always,
+        pass_through: true,
+        ..KeyOptions::default()
+    };
 
     let s = state.clone();
     on_key_with("down", always(), move |_| move_selection(&s, 1));
@@ -267,7 +274,12 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     on_key_with("mod+p", always(), move |_| toggle_pin(&s, db.as_deref()));
     let s = state.clone();
     let db = store.clone();
-    on_key("backspace", move |_| delete_selected(&s, db.as_deref()));
+    on_key_with("backspace", always_pass(), move |_| {
+        // 查询为空时才删除条目；有查询时交给输入框删字符。
+        if s.query.get().is_empty() {
+            delete_selected(&s, db.as_deref());
+        }
+    });
     on_key("mod+,", |_| crate::open_settings());
     // 搜索框聚焦时 Esc 由输入框的 on_key_press 处理，这里是焦点不在输入框时的兜底。
     on_key("escape", |_| crate::hide_panel());
