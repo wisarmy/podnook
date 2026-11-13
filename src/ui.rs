@@ -4,6 +4,7 @@
 //! Pinned / Today / 更早 分组列表，右侧预览与元信息，底部操作栏。
 //! 数据来自 `podnook-core` 的 SQLite，捕获线程写入后这里自动刷新。
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,6 +13,8 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use nsh_base::input;
+use nsh_core::desktop::{WindowAttributes, WindowKind, WindowLevel, Workspaces};
+use nsh_core::element::desktop::{open_window, window as panel_window, WindowRef};
 use nsh_core::keymap::When;
 use nsh_core::prelude::*;
 use nsh_core::PressEvent;
@@ -28,6 +31,8 @@ thread_local! {
     static SEARCH: std::cell::RefCell<Option<ElementRef>> = const { std::cell::RefCell::new(None) };
     /// 面板的界面状态，用于呼出时重置搜索与选中项。
     static STATE: std::cell::RefCell<Option<State>> = const { std::cell::RefCell::new(None) };
+    /// 编辑内容窗口。
+    static EDITOR: std::cell::RefCell<Option<WindowRef>> = const { std::cell::RefCell::new(None) };
 }
 
 /// 面板每次呼出：清空搜索、选中第一条、聚焦搜索框。
@@ -63,6 +68,8 @@ struct State {
     actions_query: Signal<String>,
     actions_selected: Signal<usize>,
     actions_search: ElementRef,
+    save_path: Signal<String>,
+    save_input: ElementRef,
 }
 
 #[derive(Clone, PartialEq)]
@@ -76,13 +83,17 @@ enum ActionMode {
     Main,
     Range,
     ConfirmAll,
+    SaveFile,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ActionKind {
     Paste,
     Copy,
+    Edit,
     Pin,
+    SaveFile,
+    SaveNow,
     Delete,
     DeleteEntries,
     DeleteAll,
@@ -117,6 +128,7 @@ pub fn shell() -> impl IntoElement {
     let rows = computed(move || build_rows(&clips.get(), &query.get(), filter.get()));
     let search = element_ref();
     let actions_search = element_ref();
+    let save_input = element_ref();
     SEARCH.with(|slot| *slot.borrow_mut() = Some(search));
     let state = State {
         clips,
@@ -131,6 +143,8 @@ pub fn shell() -> impl IntoElement {
         actions_query: signal(String::new()),
         actions_selected: signal(0usize),
         actions_search,
+        save_path: signal(String::new()),
+        save_input,
     };
     STATE.with(|slot| *slot.borrow_mut() = Some(state.clone()));
 
@@ -201,6 +215,261 @@ fn shell_view(state: State) -> impl IntoElement {
         .child(actions_overlay(state.clone()))
 }
 
+pub fn open_editor(clip: Clip) {
+    close_editor();
+    let mut attributes = WindowAttributes::default();
+    attributes.activate = Some(false);
+    attributes.focusable = Some(true);
+    attributes.resizable = Some(true);
+    attributes.close_on_escape = Some(true);
+    attributes.level = Some(WindowLevel::Floating);
+    attributes.workspaces = Some(Workspaces::All);
+    let window = panel_window()
+        .id("editor")
+        .kind(WindowKind::Panel)
+        .title("编辑内容")
+        .default_size(size(px(640.0), px(460.0)))
+        .attributes(attributes)
+        .content(move || edit_content(clip.clone()));
+    if let Some(window) = open_window(window) {
+        window.focus();
+        let refocus = window.clone();
+        set_timeout(Duration::from_millis(150), move || refocus.focus());
+        EDITOR.with(|slot| *slot.borrow_mut() = Some(window));
+    }
+}
+
+fn close_editor() {
+    EDITOR.with(|slot| {
+        if let Some(window) = slot.borrow_mut().take() {
+            if window.state().is_some() {
+                window.close();
+            }
+        }
+    });
+}
+
+fn edit_content(clip: Clip) -> impl IntoElement {
+    let text_value = signal(clip.content.clone().unwrap_or_default());
+    let notice = signal(None::<String>);
+    let store = crate::history::init();
+
+    let save_store = store;
+    let save_text = text_value;
+    let save_notice = notice;
+    let save_id = clip.id;
+    let save = move || {
+        let Some(store) = save_store.as_deref() else {
+            return;
+        };
+        match store.update_text(save_id, &save_text.get()) {
+            Ok(()) => {
+                crate::history::bump();
+                crate::show_panel();
+                close_editor();
+            }
+            Err(e) => {
+                log::error!("update clip: {e}");
+                save_notice.set(Some("保存失败：内容为空，或与已有条目重复".into()));
+            }
+        }
+    };
+
+    let cancel = || {
+        crate::show_panel();
+        close_editor();
+    };
+    let input_text = text_value;
+
+    view()
+        .flex_1()
+        .flex_col()
+        .bg(theme::bg())
+        .text_color(theme::fg())
+        .p_4()
+        .gap_3()
+        .child(
+            text("编辑内容")
+                .text_size(px(13.0))
+                .text_color(theme::muted_fg()),
+        )
+        .child(
+            view()
+                .flex_1()
+                .flex_col()
+                .rounded(px(8.0))
+                .bg(theme::card())
+                .border_1()
+                .border_color(theme::border())
+                .p_3()
+                .child(
+                    input()
+                        .multiline(true)
+                        .flex_1()
+                        .value(input_text)
+                        .on_change(move |value: &str| input_text.set(value.to_string()))
+                        .on_key_press(move |key: &str| {
+                            if key == "Escape" {
+                                crate::show_panel();
+                                close_editor();
+                            }
+                        })
+                        .text_size(px(13.0))
+                        .text_color(theme::fg())
+                        .auto_focus(true),
+                ),
+        )
+        .child(dynamic(move || {
+            if let Some(message) = notice.get() {
+                text(message)
+                    .text_size(px(11.0))
+                    .text_color(theme::danger())
+            } else {
+                text("保存后更新这条历史记录")
+                    .text_size(px(11.0))
+                    .text_color(theme::muted_fg())
+            }
+        }))
+        .child(
+            view()
+                .flex_row()
+                .justify_end()
+                .gap_2()
+                .child(editor_button("取消", false, cancel))
+                .child(editor_button("保存", true, save)),
+        )
+}
+
+fn editor_button(
+    label: &'static str,
+    primary: bool,
+    on_press: impl Fn() + 'static,
+) -> impl IntoElement {
+    view()
+        .on_press(on_press)
+        .px_3()
+        .py_2()
+        .rounded(px(6.0))
+        .bg(if primary {
+            theme::primary()
+        } else {
+            theme::card()
+        })
+        .border_1()
+        .border_color(theme::border())
+        .child(
+            text(label)
+                .text_size(px(12.0))
+                .text_color(if primary {
+                    theme::on_primary()
+                } else {
+                    theme::fg()
+                }),
+        )
+}
+
+fn safe_name(preview: &str) -> String {
+    let cleaned: String = preview
+        .chars()
+        .map(|c| {
+            if matches!(c, '/' | ':' | '\\' | '\n' | '\r' | '\t') {
+                '-'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let mut name: String = cleaned.trim().chars().take(60).collect();
+    if name.is_empty() {
+        name = "clipboard".into();
+    }
+    name
+}
+
+enum SaveData {
+    Bytes(Vec<u8>),
+    Copy(PathBuf),
+}
+
+fn default_save_path(name: &str) -> String {
+    match std::env::var("HOME") {
+        Ok(home) => format!("{home}/Downloads/{name}"),
+        Err(_) => name.to_string(),
+    }
+}
+
+fn expand_tilde(path: &str) -> PathBuf {
+    if let Ok(home) = std::env::var("HOME") {
+        if let Some(rest) = path.strip_prefix("~/") {
+            return PathBuf::from(home).join(rest);
+        }
+        if path == "~" {
+            return PathBuf::from(home);
+        }
+    }
+    PathBuf::from(path)
+}
+
+fn save_target(clip: &Clip) -> Option<(String, SaveData)> {
+    match clip.kind {
+        ClipKind::Text | ClipKind::Link => {
+            let content = clip.content.clone().unwrap_or_default();
+            Some((
+                format!("{}.txt", safe_name(&clip.preview)),
+                SaveData::Bytes(content.into_bytes()),
+            ))
+        }
+        ClipKind::Image => {
+            let path = clip.image_path.as_deref()?;
+            let bytes = std::fs::read(path).ok()?;
+            Some((
+                format!("{}.png", safe_name(&clip.preview)),
+                SaveData::Bytes(bytes),
+            ))
+        }
+        ClipKind::File => {
+            let path = clip.file_uris.first()?;
+            let source = PathBuf::from(path);
+            let name = source
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| "file".to_string());
+            Some((name, SaveData::Copy(source)))
+        }
+    }
+}
+
+fn save_now(state: &State) {
+    let Some(clip) = selected_clip(state) else {
+        return;
+    };
+    let Some((_, data)) = save_target(&clip) else {
+        flash(state, "这个条目无法保存为文件");
+        return;
+    };
+    let raw = state.save_path.get();
+    let path = expand_tilde(raw.trim());
+    if path.as_os_str().is_empty() {
+        flash(state, "保存路径不能为空");
+        return;
+    }
+    let result = match data {
+        SaveData::Bytes(bytes) => std::fs::write(&path, bytes),
+        SaveData::Copy(source) => std::fs::copy(&source, &path).map(|_| ()),
+    };
+    match result {
+        Ok(()) => {
+            close_actions(state);
+            flash(state, format!("已保存到 {}", path.display()));
+        }
+        Err(e) => {
+            log::error!("save clip to {}: {e}", path.display());
+            flash(state, "保存失败，检查路径后重试");
+        }
+    }
+}
+
 fn actions_overlay(state: State) -> impl IntoElement {
     dynamic(move || actions_overlay_inner(state.clone()))
 }
@@ -213,6 +482,7 @@ fn actions_overlay_inner(state: State) -> View {
         ActionMode::Main => "操作",
         ActionMode::Range => "删除最近…",
         ActionMode::ConfirmAll => "清空全部",
+        ActionMode::SaveFile => "保存为文件",
     };
     let selected = state.actions_selected.get();
     let items = action_items(&state);
@@ -229,6 +499,43 @@ fn actions_overlay_inner(state: State) -> View {
     for (index, item) in items.into_iter().enumerate() {
         list = list.child(action_row(state.clone(), item, index == selected));
     }
+
+    let save_mode = state.actions_mode.get() == ActionMode::SaveFile;
+    let body = if save_mode {
+        let path = state.save_path;
+        let input_ref = state.save_input;
+        let escape_state = state.clone();
+        view()
+            .flex_col()
+            .p_3()
+            .gap_2()
+            .child(
+                text("保存到")
+                    .text_size(px(11.0))
+                    .text_color(theme::muted_fg()),
+            )
+            .child(
+                input()
+                    .element_ref(&input_ref)
+                    .value(path)
+                    .on_change(move |value: &str| path.set(value.to_string()))
+                    .on_key_press(move |key: &str| {
+                        if key == "Escape" {
+                            close_actions(&escape_state);
+                        }
+                    })
+                    .text_size(px(12.0))
+                    .placeholder("~/Downloads/…")
+                    .auto_focus(true),
+            )
+            .child(
+                text("Enter 保存 · Esc 取消")
+                    .text_size(px(11.0))
+                    .text_color(theme::muted_fg()),
+            )
+    } else {
+        list
+    };
 
     let backdrop_state = state.clone();
     let search_ref = state.actions_search;
@@ -273,8 +580,10 @@ fn actions_overlay_inner(state: State) -> View {
                         .child(text(title).text_size(px(12.0)).text_color(theme::muted_fg()))
                         .child(text("⌘K 关闭").text_size(px(11.0)).text_color(theme::muted_fg())),
                 )
-                .child(list)
-                .child(
+                .child(body)
+                .child(if save_mode {
+                    view()
+                } else {
                     view()
                         .px_3()
                         .py_2()
@@ -295,8 +604,8 @@ fn actions_overlay_inner(state: State) -> View {
                                 })
                                 .placeholder("搜索操作…")
                                 .text_size(px(12.0)),
-                        ),
-                ),
+                        )
+                }),
         )
 }
 
@@ -481,10 +790,14 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     let db = store.clone();
     on_key_with("enter", always(), move |_| {
         if s.actions_open.get() {
-            let items = action_items(&s);
-            if let Some(item) = items.get(s.actions_selected.get()).cloned() {
-                let store = crate::history::init();
-                run_action(&s, store.as_deref(), item.kind);
+            if s.actions_mode.get() == ActionMode::SaveFile {
+                save_now(&s);
+            } else {
+                let items = action_items(&s);
+                if let Some(item) = items.get(s.actions_selected.get()).cloned() {
+                    let store = crate::history::init();
+                    run_action(&s, store.as_deref(), item.kind);
+                }
             }
         } else {
             activate_selected(&s, db.as_deref(), true);
@@ -494,6 +807,21 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     let db = store.clone();
     on_key_with("mod+enter", always(), move |_| {
         activate_selected(&s, db.as_deref(), false)
+    });
+    let s = state.clone();
+    on_key_with("mod+e", always(), move |_| {
+        if let Some(clip) = selected_clip(&s) {
+            if matches!(clip.kind, ClipKind::Text | ClipKind::Link) {
+                s.actions_open.set(false);
+                open_editor(clip);
+            }
+        }
+    });
+    let s = state.clone();
+    on_key_with("alt+shift+mod+s", always(), move |_| {
+        if selected_clip(&s).is_some() {
+            enter_save_mode(&s);
+        }
     });
     // Raycast 对齐：固定是 ⇧⌘P；⌘. 留给 Append to Clipboard。
     let s = state.clone();
@@ -554,6 +882,24 @@ fn enter_action_mode(state: &State, mode: ActionMode) {
     set_timeout(Duration::from_millis(30), move || search.focus());
 }
 
+fn enter_save_mode(state: &State) {
+    let Some(clip) = selected_clip(state) else {
+        return;
+    };
+    let Some((name, _)) = save_target(&clip) else {
+        return;
+    };
+    state.save_path.set(default_save_path(&name));
+    state.actions_mode.set(ActionMode::SaveFile);
+    state.actions_query.set(String::new());
+    state.actions_selected.set(0);
+    if !state.actions_open.get() {
+        state.actions_open.set(true);
+    }
+    let input = state.save_input;
+    set_timeout(Duration::from_millis(30), move || input.focus());
+}
+
 fn close_actions(state: &State) {
     state.actions_open.set(false);
     state.actions_mode.set(ActionMode::Main);
@@ -579,6 +925,11 @@ fn action_items(state: &State) -> Vec<ActionItem> {
         _ => "固定",
     };
 
+    let editable = matches!(
+        selected_clip(state).map(|clip| clip.kind),
+        Some(ClipKind::Text) | Some(ClipKind::Link)
+    );
+
     let mut items = match state.actions_mode.get() {
         ActionMode::Range => DELETE_RANGES
             .iter()
@@ -603,6 +954,20 @@ fn action_items(state: &State) -> Vec<ActionItem> {
                 destructive: false,
             },
         ],
+        ActionMode::SaveFile => vec![
+            ActionItem {
+                kind: ActionKind::SaveNow,
+                label: "保存".into(),
+                shortcut: "enter",
+                destructive: false,
+            },
+            ActionItem {
+                kind: ActionKind::Back,
+                label: "取消".into(),
+                shortcut: "escape",
+                destructive: false,
+            },
+        ],
         ActionMode::Main => vec![
             ActionItem {
                 kind: ActionKind::Paste,
@@ -617,9 +982,21 @@ fn action_items(state: &State) -> Vec<ActionItem> {
                 destructive: false,
             },
             ActionItem {
+                kind: ActionKind::Edit,
+                label: "编辑内容".into(),
+                shortcut: "mod+e",
+                destructive: false,
+            },
+            ActionItem {
                 kind: ActionKind::Pin,
                 label: pin_label.into(),
                 shortcut: "shift+mod+p",
+                destructive: false,
+            },
+            ActionItem {
+                kind: ActionKind::SaveFile,
+                label: "保存为文件…".into(),
+                shortcut: "alt+shift+mod+s",
                 destructive: false,
             },
             ActionItem {
@@ -652,6 +1029,10 @@ fn action_items(state: &State) -> Vec<ActionItem> {
         });
     }
 
+    if !editable {
+        items.retain(|item| item.kind != ActionKind::Edit);
+    }
+
     let query = state.actions_query.get().trim().to_lowercase();
     if !query.is_empty() {
         items.retain(|item| item.label.to_lowercase().contains(&query));
@@ -680,6 +1061,22 @@ fn run_action(state: &State, store: Option<&Store>, kind: ActionKind) {
             state.actions_open.set(false);
             activate_selected(state, store, false);
         }
+        ActionKind::Edit => {
+            if let Some(clip) = selected_clip(state) {
+                if matches!(clip.kind, ClipKind::Text | ClipKind::Link) {
+                    state.actions_open.set(false);
+                    open_editor(clip);
+                }
+            }
+        }
+        ActionKind::SaveFile => {
+            if let Some(clip) = selected_clip(state) {
+                if save_target(&clip).is_some() {
+                    enter_save_mode(state);
+                }
+            }
+        }
+        ActionKind::SaveNow => save_now(state),
         ActionKind::Pin => {
             toggle_pin(state, store);
             close_actions(state);
@@ -690,7 +1087,13 @@ fn run_action(state: &State, store: Option<&Store>, kind: ActionKind) {
         }
         ActionKind::DeleteEntries => enter_action_mode(state, ActionMode::Range),
         ActionKind::DeleteAll => enter_action_mode(state, ActionMode::ConfirmAll),
-        ActionKind::Back => enter_action_mode(state, ActionMode::Main),
+        ActionKind::Back => {
+            if state.actions_mode.get() == ActionMode::SaveFile {
+                close_actions(state);
+            } else {
+                enter_action_mode(state, ActionMode::Main);
+            }
+        }
         ActionKind::DeleteRange(seconds) => {
             let Some(store) = store else {
                 return;

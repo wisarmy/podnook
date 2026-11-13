@@ -12,8 +12,8 @@ use std::sync::Mutex;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::{
-    hash_bytes, hash_text, preview_for_files, preview_for_image, preview_for_text, truncate_text,
-    Clip, ClipKind, NewClip, Snapshot, IMAGE_LIMIT, RETENTION_COUNT, RETENTION_DAYS,
+    hash_bytes, hash_text, kind_for_text, preview_for_files, preview_for_image, preview_for_text,
+    truncate_text, Clip, ClipKind, NewClip, Snapshot, IMAGE_LIMIT, RETENTION_COUNT, RETENTION_DAYS,
     SETTING_IGNORED_BUNDLES, SETTING_RETENTION_COUNT, SETTING_RETENTION_DAYS, TEXT_LIMIT,
 };
 
@@ -387,6 +387,37 @@ impl Store {
             .unwrap_or_default())
     }
 
+    /// 编辑文本/链接条目的内容，重新计算类型、预览、哈希与大小。
+    pub fn update_text(&self, id: i64, text: &str) -> rusqlite::Result<()> {
+        if text.trim().is_empty() {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "clipboard content cannot be empty".into(),
+            ));
+        }
+        let (stored, truncated) = truncate_text(text, TEXT_LIMIT);
+        let kind = kind_for_text(&stored);
+        let preview = preview_for_text(&stored);
+        let hash = hash_text(&stored);
+        let byte_size = stored.len() as i64;
+        let conn = self.lock();
+        conn.execute(
+            "UPDATE clips
+             SET kind = ?1, content = ?2, preview = ?3, hash = ?4,
+                 byte_size = ?5, truncated = ?6
+             WHERE id = ?7",
+            params![
+                kind.as_str(),
+                stored,
+                preview,
+                hash,
+                byte_size,
+                truncated as i64,
+                id
+            ],
+        )?;
+        Ok(())
+    }
+
     /// 删除 `cutoff` 之后复制的条目（pin 的保留）并删除图片文件。
     pub fn delete_since(&self, cutoff: i64) -> rusqlite::Result<usize> {
         self.remove_matching(
@@ -540,6 +571,20 @@ mod tests {
         assert_eq!(row.image_w, Some(499));
         assert_eq!(row.image_h, Some(381));
         assert_eq!(row.preview, "图片 499×381");
+    }
+
+    #[test]
+    fn updates_text_content_and_kind() {
+        let store = store();
+        store.capture(text_clip("hello"), 1).unwrap();
+        let id = store.list(1).unwrap()[0].id;
+
+        store.update_text(id, "https://nsh.dev/").unwrap();
+        let row = store.list(1).unwrap().remove(0);
+        assert_eq!(row.kind, ClipKind::Link);
+        assert_eq!(row.content.as_deref(), Some("https://nsh.dev/"));
+        assert_eq!(row.preview, "https://nsh.dev/");
+        assert_eq!(row.byte_size, 16);
     }
 
     #[test]
