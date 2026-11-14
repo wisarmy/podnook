@@ -33,7 +33,7 @@ pub fn settings() -> impl IntoElement {
     let confirm_clear = signal(false);
     let trusted = signal(crate::paste::is_trusted());
 
-    // 呼出热键：点字段直接录制，Recording 状态内联在字段里。
+    // 呼出热键：点字段直接录制；录制提示用字段上方的浮层。
     let start_recording = move || {
         recording.set(true);
         crate::suspend_hotkey();
@@ -45,51 +45,73 @@ pub fn settings() -> impl IntoElement {
         crate::register_hotkey(&hotkey.get());
         show_notice(notice, "已取消");
     };
-    let record_control = dynamic(move || {
-        if recording.get() {
-            view()
-                .flex_row()
-                .items_center()
-                .gap_2()
-                .px_3()
-                .py_2()
-                .rounded(px(8.0))
-                .bg(theme::glass_card())
-                .border_1()
-                .border_color(theme::primary())
-                .child(
-                    view()
-                        .flex_col()
-                        .gap_1()
-                        .child(
-                            text("录制中…")
-                                .text_size(px(11.0))
-                                .text_color(theme::primary()),
-                        )
-                        .child(
-                            text("例如 ⇧⌘Space")
-                                .text_size(px(10.0))
-                                .text_color(theme::muted_fg()),
-                        ),
-                )
-                .child(choice("×", || false, cancel_recording))
-        } else {
+    let record_control = view()
+        .relative()
+        .child(
             view()
                 .on_press(start_recording)
                 .cursor_pointer()
                 .px_3()
                 .py_2()
-                .rounded(px(8.0))
-                .bg(theme::glass_card())
+                .rounded(px(7.0))
+                .bg(theme::surface())
                 .border_1()
-                .border_color(theme::border())
+                .border_color(move || {
+                    if recording.get() {
+                        theme::primary()
+                    } else {
+                        theme::border()
+                    }
+                })
                 .child(
                     text(key_label(&hotkey.get()))
                         .text_size(px(12.0))
                         .text_color(theme::fg()),
+                ),
+        )
+        .child(dynamic(move || {
+            if !recording.get() {
+                return view();
+            }
+            view()
+                .absolute()
+                .top(px(40.0))
+                .right(px(0.0))
+                .w(px(190.0))
+                .z_index(50)
+                .rounded(px(12.0))
+                .bg(theme::card())
+                .border_1()
+                .border_color(theme::border())
+                .shadow_lg()
+                .px_4()
+                .py_3()
+                .flex_col()
+                .items_center()
+                .gap_1()
+                .child(
+                    view().w_full().flex_row().justify_end().child(
+                        view()
+                            .on_press(cancel_recording)
+                            .cursor_pointer()
+                            .child(
+                                text("×")
+                                    .text_size(px(12.0))
+                                    .text_color(theme::muted_fg()),
+                            ),
+                    ),
                 )
-        }
-    });
+                .child(
+                    text("例如 ⇧⌘Space")
+                        .text_size(px(12.0))
+                        .text_color(theme::muted_fg()),
+                )
+                .child(
+                    text("录制中…")
+                        .text_size(px(13.0))
+                        .text_color(theme::fg()),
+                )
+        }));
 
     let store_for_poll = store.clone();
     set_interval(std::time::Duration::from_millis(100), move || {
@@ -463,10 +485,14 @@ pub fn settings() -> impl IntoElement {
                 .flex_col()
                 .p_6()
                 .gap_5()
-                .child(settings_section(
-                    "呼出",
-                    view().flex_col().child(setting_row("呼出热键", record_control)),
-                ))
+                .child(
+                    view()
+                        .z_index(move || if recording.get() { 20 } else { 0 })
+                        .child(settings_section(
+                            "呼出",
+                            view().flex_col().child(setting_row("呼出热键", record_control)),
+                        )),
+                )
                 .child(settings_section("历史", history_rows))
                 .child(settings_section("粘贴", paste_rows))
                 .child(settings_section("登录项", login_rows))
@@ -503,7 +529,6 @@ fn settings_section(title: &'static str, rows: View) -> View {
                 .bg(theme::glass_card())
                 .border_1()
                 .border_color(theme::border())
-                .overflow_hidden()
                 .child(rows),
         )
 }
