@@ -179,11 +179,12 @@ pub fn settings() -> impl IntoElement {
                         });
                         show_notice(notice_signal, "已应用");
                     } else {
-                        // 被占用时不落库，恢复原来的热键。
+                        // 注册失败时不落库，静默恢复原来的热键。
+                        // 不提示「被其他 App 占用」：组合键被占用时别的 App
+                        // 已经给出反馈，这里再报一次只会误导。
                         hotkey_signal.set(previous_for_result.clone());
                         crate::register_hotkey(&previous_for_result);
                         success_signal.set(None);
-                        show_notice(notice_signal, "被其他 App 占用，换一个组合");
                     }
                 }) {
                     // 注册已发出；结果在回调里决定是否落库。

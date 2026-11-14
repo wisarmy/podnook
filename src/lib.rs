@@ -206,7 +206,7 @@ pub fn register_hotkey(keystroke: &str) -> bool {
     register_hotkey_with(keystroke, |_| {})
 }
 
-/// 注册呼出热键，并在系统答复「是否被其他 App 占用」时回调。
+/// 注册呼出热键，并在系统答复是否注册成功时回调。
 pub fn register_hotkey_with(
     keystroke: &str,
     on_result: impl Fn(bool) + 'static,
