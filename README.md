@@ -6,6 +6,11 @@
 
 产品定位、领域词汇与决策记录见 [`CONTEXT.md`](CONTEXT.md)，架构决策见 [`docs/adr/`](docs/adr/)。
 
+<p align="center">
+  <img src="docs/images/panel.png" width="900" alt="Podnook 主面板：搜索、类型筛选、剪贴板列表与预览">
+</p>
+<p align="center"><sub>主面板 · 示例数据</sub></p>
+
 ## 状态
 
 v0.1（M4 打包）。当前能力：菜单栏常驻、无 Dock 图标、全局热键
@@ -32,7 +37,7 @@ v0.1（M4 打包）。当前能力：菜单栏常驻、无 Dock 图标、全局�
 - Rust（edition 2024）
 - NSH CLI **v0.5.0**
 
-安装 NSH CLI（**不要用 Homebrew**，它当前只到 v0.4.0 且仅 arm64）：
+安装 NSH CLI（**不要用 Homebrew**，它当前只到 v0.4.0）。NSH v0.5.0 的 macOS CLI 只有 arm64 归档；Intel Mac 请直接下载发布包：
 
 ```sh
 curl -fsSL https://nsh.dev/install.sh | sh
@@ -54,7 +59,32 @@ cargo test -p podnook-core   # 领域层与数据库单测，不依赖 NSH
 
 `PODNOOK_DATA_DIR` 仅用于开发：让应用指向另一份数据目录（截图、手工验收），不设置时用 NSH 分配的标准目录。
 
-## 安装与签名
+```sh
+./scripts/seed-screenshots.py        # 生成示例数据到 .nsh/screenshot-data
+PODNOOK_DATA_DIR=.nsh/screenshot-data nsh run
+make screenshot                      # 重新生成 docs/images/panel.png
+```
+
+## 安装
+
+### 下载安装
+
+从 [GitHub Releases](https://github.com/wisarmy/podnook/releases) 下载对应架构的 DMG：
+
+- `Podnook-<version>-arm64.dmg`：Apple Silicon（M1/M2/M3/M4）
+- `Podnook-<version>-x86_64.dmg`：Intel Mac
+
+打开 DMG，把 Podnook 拖进 Applications。
+
+发布包用固定的自签名证书签名，所以后续更新不会重置辅助功能权限；但它没有经过 Apple 公证，**首次打开会被 Gatekeeper 拦一次**：
+
+1. 双击 App，提示无法验证开发者；
+2. 打开 **系统设置 → 隐私与安全性**，在“安全性”里点 **仍要打开**；
+3. 或在终端执行：`xattr -dr com.apple.quarantine /Applications/Podnook.app`。
+
+首次使用仍需在设置里授权辅助功能（粘回需要）。
+
+### 从源码安装
 
 ```sh
 make signing   # 一次性：在本机登录钥匙串创建自签名证书 Podnook Local Signing
@@ -68,11 +98,15 @@ make install   # 打包 → 用固定身份重签 → 校验 → 安装到 /Appl
 二进制的 cdhash，每次打包都会变，权限随之失效。固定证书签名的指定要求是
 `identifier "com.podnook.app" and certificate leaf = H"…"`，重建不会重置权限。
 
+本地开发用 `Podnook Local Signing`；GitHub 发布用另一张固定的自签名证书
+`Podnook Release Signing`，证书和密码只放在仓库 Secrets 里。发布流程见
+[`docs/RELEASING.md`](docs/RELEASING.md)。
+
 首次使用只需授权一次：设置 → 「辅助功能」→「请求权限」→ 在系统设置里打开开关。
 之后 `make install` 更新不会再要求重新授权。
 
 只有以下情况需要重新授权（`tccutil reset Accessibility com.podnook.app` 后重来一次）：
-证书被删除/重建、bundle id 改变、换一台机器。私钥只在本机钥匙串，不进入仓库。
+证书被删除/重建、bundle id 改变、换一台机器。私钥只在本机钥匙串和 GitHub Secrets，不进入仓库。
 
 ## 数据与权限
 
@@ -81,10 +115,15 @@ make install   # 打包 → 用固定身份重签 → 校验 → 安装到 /Appl
   - `images/<hash>.png`：图片条目缓存
 - 默认只忽略系统「密码」App，其它来源 App 可在设置里点「选择 App…」从正在运行的应用中添加，或手动填 bundle id；元信息显示复制次数、字数。
 - **辅助功能（Accessibility）权限**：仅用于「粘回」（模拟 ⌘V）。未授权时自动降级为「仅复制」，
-  设置里可一键「请求权限」；未授权时自动降级为「仅复制」。
-- 应用无 Dock 图标，常驻菜单栏；默认呼出热键 **⌘⇧V**，点菜单栏图标也可打开。若该组合已被其他 App 的全局热键占用，设置里会提示，换一个组合即可。
+  设置里可一键「请求权限」。
+- 应用无 Dock 图标，常驻菜单栏；默认呼出热键 **⌘⇧V**，点菜单栏图标也可打开。若该组合已被其他 App 的全局热键占用，换一个组合即可。
 - 快捷键（与 Raycast 对齐）：`↵` 粘贴、`⌘↵` 仅复制、`⌘K` 操作面板、`⌘E` 编辑内容、`⇧⌘P` 固定、`⌥⇧⌘S` 保存为文件、`⌘P` 切换类型筛选、`⌃X` 删除、`⇧⌘X` 删除最近…、`⌃⇧X` 清空全部、`⌘O` 打开链接/文件、`⇧⌘O` 在 Finder 中显示、`⌘,` 设置、`Esc` 收起。`⌫` 只编辑搜索框，不再删除条目。
 - 保存为文件默认写入 `~/Downloads`，路径可在操作面板里直接修改；文本/链接存 `.txt`，图片存 `.png`，文件条目复制原文件。
+
+## 发布
+
+版本通过 GitHub Actions 构建：打 `v*` tag 会生成 arm64 / x86_64 两个 DMG 并创建 Release。
+签名证书、发布步骤和 Gatekeeper 说明见 [`docs/RELEASING.md`](docs/RELEASING.md)。
 
 ## 许可
 

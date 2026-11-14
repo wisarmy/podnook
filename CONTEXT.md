@@ -51,6 +51,7 @@ v0.1 只做剪贴板历史；Podnook 之后可以长成「多功能个人工具�
 - **玻璃质感**：主面板、设置、编辑窗口用 `NSVisualEffectView`（Popover 材质、behind-window 模糊）+ 半透明主题色；面板背后透出桌面模糊。
 - **设置**：设置窗口（`⌘,` 或托盘菜单，浮在最前、失焦后退到后面），设置存 SQLite `settings` 表；保留期、忽略 App 由采集线程实时读取。
 - **登录项**：`SMAppService.mainApp`；开发用的裸 runner 不支持，打包后的 `.app` 才有效。
+- **发布**：GitHub Actions 在 `v*` tag 构建 arm64 / x86_64 两个 DMG，用固定的自签名证书 `Podnook Release Signing` 签名（私钥只放在 GitHub Secrets），不做 Apple 公证；首次打开需在系统设置里放行。证书身份不变，辅助功能授权跨更新保留；换证书会让用户重新授权一次。
 - **App 图标**：W4 方案——浅暖底 + 陶土色弯曲豆荚 + 三颗豌豆 + 短茎叶，大面积留白；`assets/icon.svg` 为源，`assets/icon.png`（1024）随 `nsh package` 生成 `AppIcon.icns`；托盘用同符号的单色模板。
 - **分层**：领域模型、捕获规则与 SQLite 在独立的 `podnook-core` crate（不依赖 NSH/AppKit），应用层只负责把 `NSPasteboard` 快照喂进来；`cargo test -p podnook-core` 可快速跑完。
 
@@ -76,7 +77,7 @@ v0.1 只做剪贴板历史；Podnook 之后可以长成「多功能个人工具�
 ## 明确不做（v2 清单）
 
 - 颜色类型、HTML/RTF 格式保留、OCR、多选、智能排序、FTS5。
-- Developer ID 签名与公证、自动更新。
+- Developer ID 签名与公证（v0.1 用固定自签名 + Gatekeeper 手动放行）、自动更新。
 - Podnook 的其它模块（todo、摘抄等）。
 - 同步、账号、任何联网功能。
 
@@ -103,6 +104,7 @@ v0.1 只做剪贴板历史；Podnook 之后可以长成「多功能个人工具�
 3. 辅助功能权限可能被拒绝 → 降级为「仅复制」必须无感可用。
 4. `SMAppService` 要求代码签名；已改用固定的本机自签名身份，若登录项仍被拒绝 → 回退 `~/Library/LaunchAgents`。
 5. 纯 Rust UI 迭代慢于 TSX → 组件拆细，控制单文件体积。
+6. 自签名发布包首次打开会被 Gatekeeper 拦；证书私钥放在 GitHub Secrets，泄露或轮换会让用户重新授权。CI 的 macOS runner 只有 14 GB SSD，x86_64 交叉构建和大 target 要控制缓存。
 
 ## 里程碑
 

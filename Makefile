@@ -1,12 +1,18 @@
 export PATH := $(HOME)/.local/bin:$(PATH)
 
-.PHONY: install signing check test run
+.PHONY: install signing release-signing screenshot check test run
 
 install:
 	./scripts/install.sh
 
 signing:
 	./scripts/setup-signing.sh
+
+release-signing:
+	./scripts/setup-release-signing.sh
+
+screenshot:
+	./scripts/screenshot.sh
 
 check:
 	nsh check
