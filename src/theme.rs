@@ -45,6 +45,26 @@ pub fn accent_fg() -> AdaptiveColor {
     AdaptiveColor::rgb(0x3D2E1F, 0xF5EDE3)
 }
 
+/// 主面板的玻璃背景：半透明，让窗口背后的模糊透出来。
+pub fn glass_bg() -> AdaptiveColor {
+    bg().opacity(0.78)
+}
+
+/// 玻璃面板里的侧栏/浮层表面。
+pub fn glass_surface() -> AdaptiveColor {
+    surface().opacity(0.60)
+}
+
+/// 玻璃面板里的卡片、输入框。
+pub fn glass_card() -> AdaptiveColor {
+    card().opacity(0.86)
+}
+
+/// 玻璃面板里的选中行。
+pub fn glass_accent() -> AdaptiveColor {
+    accent().opacity(0.72)
+}
+
 /// 危险操作（删除、清空）。
 pub fn danger() -> AdaptiveColor {
     AdaptiveColor::rgb(0xB5432F, 0xE06A55)

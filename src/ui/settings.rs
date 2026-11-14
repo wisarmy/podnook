@@ -370,7 +370,8 @@ pub fn settings() -> impl IntoElement {
 
     view()
         .flex_1()
-        .bg(theme::bg())
+        .macos_backdrop(super::glass_backdrop())
+        .bg(theme::glass_bg())
         .text_color(theme::fg())
         .child(scroll().flex_1().child(
             view()
@@ -421,7 +422,7 @@ fn settings_section(title: &'static str, rows: View) -> View {
             view()
                 .flex_col()
                 .rounded(px(10.0))
-                .bg(theme::card())
+                .bg(theme::glass_card())
                 .border_1()
                 .border_color(theme::border())
                 .overflow_hidden()
@@ -459,9 +460,9 @@ fn choice(
         .rounded(px(7.0))
         .bg(move || {
             if selected_style() {
-                theme::accent()
+                theme::glass_accent()
             } else {
-                theme::card()
+                theme::glass_card()
             }
         })
         .border_1()

@@ -46,6 +46,7 @@ v0.1 只做剪贴板历史；Podnook 之后可以长成「多功能个人工具�
 - **数据本地持久化**：`rusqlite`（`history.db`）+ 图片文件缓存；默认保留 1000 条或 30 天，pin 永不过期。
 - **图片尺寸**：记录和显示逻辑尺寸（points，如 499×381），与 Finder/Raycast 一致；PNG 缓存仍是全分辨率，旧条目启动时自动迁移。
 - **窗口形态**：无边框（`frame: "none"`）+ 透明 + 14pt 圆角 + 系统阴影；顶部栏作为拖动区域，不显示系统标题栏。
+- **玻璃质感**：主面板、设置、编辑窗口用 `NSVisualEffectView`（Popover 材质、behind-window 模糊）+ 半透明主题色；面板背后透出桌面模糊。
 - **设置**：设置窗口（`⌘,` 或托盘菜单，浮在最前、失焦后退到后面），设置存 SQLite `settings` 表；保留期、忽略 App 由采集线程实时读取。
 - **登录项**：`SMAppService.mainApp`；开发用的裸 runner 不支持，打包后的 `.app` 才有效。
 - **App 图标**：W4 方案——浅暖底 + 陶土色弯曲豆荚 + 三颗豌豆 + 短茎叶，大面积留白；`assets/icon.svg` 为源，`assets/icon.png`（1024）随 `nsh package` 生成 `AppIcon.icns`；托盘用同符号的单色模板。

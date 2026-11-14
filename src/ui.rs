@@ -17,7 +17,9 @@ use nsh_core::desktop::{WindowAttributes, WindowKind, WindowLevel, Workspaces};
 use nsh_core::element::desktop::{open_window, window as panel_window, WindowRef};
 use nsh_core::keymap::When;
 use nsh_core::prelude::*;
-use nsh_core::PressEvent;
+use nsh_core::{
+    MacOsBackdrop, MacOsBackdropBlending, PressEvent,
+};
 use podnook_core::db::Store;
 use podnook_core::{hash_text, now_secs, Clip, ClipKind, SETTING_AUTO_PASTE};
 
@@ -196,10 +198,17 @@ pub fn shell() -> impl IntoElement {
     shell_view(state)
 }
 
+pub fn glass_backdrop() -> MacOsBackdrop {
+    let mut backdrop = MacOsBackdrop::default();
+    backdrop.blending = MacOsBackdropBlending::BehindWindow;
+    backdrop
+}
+
 fn shell_view(state: State) -> impl IntoElement {
     view()
         .flex_1()
-        .bg(theme::bg())
+        .macos_backdrop(glass_backdrop())
+        .bg(theme::glass_bg())
         .text_color(theme::fg())
         .rounded(px(14.0))
         .overflow_hidden()
@@ -222,6 +231,7 @@ pub fn open_editor(clip: Clip) {
     attributes.focusable = Some(true);
     attributes.resizable = Some(true);
     attributes.close_on_escape = Some(true);
+    attributes.transparent = Some(true);
     attributes.level = Some(WindowLevel::Floating);
     attributes.workspaces = Some(Workspaces::All);
     let window = panel_window()
@@ -284,7 +294,8 @@ fn edit_content(clip: Clip) -> impl IntoElement {
     view()
         .flex_1()
         .flex_col()
-        .bg(theme::bg())
+        .macos_backdrop(glass_backdrop())
+        .bg(theme::glass_bg())
         .text_color(theme::fg())
         .p_4()
         .gap_3()
@@ -298,7 +309,7 @@ fn edit_content(clip: Clip) -> impl IntoElement {
                 .flex_1()
                 .flex_col()
                 .rounded(px(8.0))
-                .bg(theme::card())
+                .bg(theme::glass_card())
                 .border_1()
                 .border_color(theme::border())
                 .p_3()
@@ -1292,7 +1303,7 @@ fn search_box(state: State) -> impl IntoElement {
         .px_3()
         .py_1()
         .rounded(px(8.0))
-        .bg(theme::card())
+        .bg(theme::glass_card())
         .border_1()
         .border_color(theme::border())
         .child(
@@ -1349,9 +1360,9 @@ fn filter_pill(state: State, kind: Option<ClipKind>, label: &'static str) -> imp
         .rounded(px(8.0))
         .bg(move || {
             if filter.get() == kind {
-                theme::accent()
+                theme::glass_accent()
             } else {
-                theme::card()
+                theme::glass_card()
             }
         })
         .border_1()
@@ -1379,7 +1390,7 @@ fn sidebar(state: State) -> impl IntoElement {
     view()
         .w(px(theme::SIDEBAR_WIDTH))
         .flex_col()
-        .bg(theme::surface())
+        .bg(theme::glass_surface())
         .border_r(px(1.0))
         .border_r_color(theme::border())
         .child(
@@ -1410,9 +1421,9 @@ fn sidebar(state: State) -> impl IntoElement {
                                 .rounded(px(8.0))
                                 .bg(move || {
                                     if selected.get() == Some(id) {
-                                        theme::accent()
+                                        theme::glass_accent()
                                     } else {
-                                        theme::surface()
+                                        AdaptiveColor::TRANSPARENT
                                     }
                                 })
                                 .on_press(move |event: &PressEvent| {

@@ -259,6 +259,7 @@ pub fn open_settings() {
     attributes.focusable = Some(true);
     attributes.resizable = Some(false);
     attributes.close_on_escape = Some(true);
+    attributes.transparent = Some(true);
     attributes.level = Some(WindowLevel::Floating);
     attributes.workspaces = Some(Workspaces::All);
 
