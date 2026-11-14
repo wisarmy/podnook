@@ -29,6 +29,14 @@ make release-signing
 
 然后把 `.p12` / `.pem` 移到安全的地方（密码管理器、加密磁盘），不要提交。**不要重新生成证书**：身份变了，所有用户的辅助功能授权会重置一次。确实需要轮换时，先发公告，再换新证书。
 
+证书密码会同时存进登录钥匙串，服务名 `com.podnook.release-signing`：
+
+```sh
+security find-generic-password -s com.podnook.release-signing -w
+```
+
+换机器或重装系统前，把 `.p12` 和密码一起备份到密码管理器；只备份 `.p12` 而没有密码，等于没有私钥。
+
 ## 发布一个版本
 
 1. 改 `nsh.json` 的 `version`（例如 `0.1.0`），提交。

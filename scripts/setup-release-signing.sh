@@ -43,6 +43,13 @@ openssl pkcs12 -export $LEGACY \
 
 cp "$TMP/cert.pem" "$PEM"
 
+KEYCHAIN_SERVICE="com.podnook.release-signing"
+if security add-generic-password -a "$IDENTITY" -s "$KEYCHAIN_SERVICE" -w "$PASS" -U >/dev/null 2>&1; then
+    echo "✓ 密码已存入登录钥匙串（服务名：${KEYCHAIN_SERVICE}）"
+else
+    echo "⚠ 无法写入登录钥匙串；请把密码保存到密码管理器。" >&2
+fi
+
 echo "✓ 已生成发布签名证书"
 echo
 echo "身份（MACOS_SIGN_IDENTITY）："
