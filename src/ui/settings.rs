@@ -10,6 +10,8 @@ use podnook_core::{
     SETTING_RETENTION_DAYS,
 };
 
+use nsh_platform_macos::objc2_app_kit::{NSApplicationActivationPolicy, NSWorkspace};
+
 use crate::{login_item, settings as prefs, theme};
 
 pub fn settings() -> impl IntoElement {
@@ -25,6 +27,8 @@ pub fn settings() -> impl IntoElement {
     let login_label = signal(login_item::status().label().to_string());
     let ignored = signal(config.ignored_bundles.clone());
     let new_bundle = signal(String::new());
+    let picker = signal(false);
+    let bundle_input = element_ref();
     let notice = signal(None::<String>);
     let confirm_clear = signal(false);
     let trusted = signal(crate::paste::is_trusted());
@@ -228,6 +232,9 @@ pub fn settings() -> impl IntoElement {
 
     // 忽略的 App
     let store_for_add = store.clone();
+    let add_ignored = move |bundle: String| {
+        ignore_bundle(ignored, store_for_add.clone(), notice, bundle);
+    };
     let add_row = view()
         .flex_row()
         .items_center()
@@ -237,6 +244,7 @@ pub fn settings() -> impl IntoElement {
         .child(
             input()
                 .flex_1()
+                .element_ref(&bundle_input)
                 .value(new_bundle)
                 .on_change(move |value: &str| new_bundle.set(value.to_string()))
                 .placeholder("com.apple.Terminal")
@@ -245,21 +253,73 @@ pub fn settings() -> impl IntoElement {
         .child(choice("添加", || false, move || {
             let bundle = new_bundle.get().trim().to_string();
             if bundle.is_empty() {
+                // 设置窗口是非激活浮层，输入框点击不一定拿到键盘；
+                // 这里明确把窗口和输入框都聚焦。
+                let window = nsh_core::element::desktop::current_window();
+                window.focus();
+                let input = bundle_input;
+                set_timeout(std::time::Duration::from_millis(60), move || input.focus());
+                show_notice(notice, "先输入 bundle id");
                 return;
             }
-            let mut list = ignored.get();
-            if list.iter().any(|item| item == &bundle) {
-                show_notice(notice, "已经在列表里");
-                return;
-            }
-            list.push(bundle);
-            ignored.set(list.clone());
-            if let Some(store) = &store_for_add {
-                prefs::save_ignored(store, &list);
-            }
+            add_ignored(bundle);
             new_bundle.set(String::new());
-            show_notice(notice, "已添加");
-        }));
+        }))
+        .child(choice("选择 App…", || false, move || picker.set(!picker.get())));
+
+    let store_for_picker = store.clone();
+    let picker_rows = dynamic(move || {
+        if !picker.get() {
+            return view();
+        }
+        let current = ignored.get();
+        let apps: Vec<(String, String)> = running_apps()
+            .into_iter()
+            .filter(|(_, bundle)| !current.iter().any(|item| item == bundle))
+            .collect();
+        let mut rows = view()
+            .flex_col()
+            .border_t(px(1.0))
+            .border_t_color(theme::border());
+        if apps.is_empty() {
+            rows = rows.child(view().px_4().py_3().child(
+                text("没有可添加的正在运行的 App")
+                    .text_size(px(12.0))
+                    .text_color(theme::muted_fg()),
+            ));
+        }
+        for (name, bundle) in apps {
+            let add_bundle = bundle.clone();
+            let store = store_for_picker.clone();
+            rows = rows.child(
+                view()
+                    .on_press(move || {
+                        ignore_bundle(ignored, store.clone(), notice, add_bundle.clone());
+                        picker.set(false);
+                    })
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .px_4()
+                    .py_2()
+                    .border_b(px(1.0))
+                    .border_b_color(theme::border())
+                    .child(text(name).text_size(px(12.0)))
+                    .child(
+                        text(bundle)
+                            .truncate()
+                            .text_size(px(11.0))
+                            .text_color(theme::muted_fg()),
+                    ),
+            );
+        }
+        rows.child(view().px_4().py_2().child(
+            text("只列出正在运行的 App；其它 App 用上面的输入框手动添加")
+                .text_size(px(11.0))
+                .text_color(theme::muted_fg()),
+        ))
+    });
 
     let ignored_rows = dynamic(move || {
         let mut rows = view().flex_col();
@@ -307,6 +367,7 @@ pub fn settings() -> impl IntoElement {
     let ignored_card = view()
         .flex_col()
         .child(add_row)
+        .child(picker_rows)
         .child(ignored_rows)
         .child(
             view().px_4().py_2().child(
@@ -506,6 +567,54 @@ fn toggle_control(on: Signal<bool>, on_change: impl Fn(bool) + 'static) -> View 
                     }
                 }),
         )
+}
+
+fn ignore_bundle(
+    ignored: Signal<Vec<String>>,
+    store: Option<std::sync::Arc<podnook_core::db::Store>>,
+    notice: Signal<Option<String>>,
+    bundle: String,
+) {
+    let bundle = bundle.trim().to_string();
+    if bundle.is_empty() {
+        return;
+    }
+    let mut list = ignored.get();
+    if list.iter().any(|item| item == &bundle) {
+        show_notice(notice, "已经在列表里");
+        return;
+    }
+    list.push(bundle.clone());
+    ignored.set(list.clone());
+    if let Some(store) = &store {
+        prefs::save_ignored(store, &list);
+    }
+    show_notice(notice, format!("已添加 {bundle}"));
+}
+
+fn running_apps() -> Vec<(String, String)> {
+    let workspace = NSWorkspace::sharedWorkspace();
+    let mut out = Vec::new();
+    for app in workspace.runningApplications().iter() {
+        if app.activationPolicy() != NSApplicationActivationPolicy::Regular {
+            continue;
+        }
+        let Some(name) = app.localizedName() else {
+            continue;
+        };
+        let Some(bundle) = app.bundleIdentifier() else {
+            continue;
+        };
+        let name = name.to_string();
+        let bundle = bundle.to_string();
+        if bundle.is_empty() || bundle == "com.podnook.app" {
+            continue;
+        }
+        out.push((name, bundle));
+    }
+    out.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+    out.dedup_by(|a, b| a.1 == b.1);
+    out
 }
 
 fn show_notice(notice: Signal<Option<String>>, message: impl Into<String>) {

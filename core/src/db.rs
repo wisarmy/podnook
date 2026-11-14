@@ -588,7 +588,7 @@ mod tests {
                 .ignored_bundles()
                 .unwrap()
                 .iter()
-                .any(|bundle| bundle == "com.1password.1password")
+                .any(|bundle| bundle == "com.apple.Passwords")
         );
         store.set_setting(SETTING_IGNORED_BUNDLES, "[]").unwrap();
         assert!(store.ignored_bundles().unwrap().is_empty());

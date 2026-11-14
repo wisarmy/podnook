@@ -45,7 +45,7 @@ v0.1 只做剪贴板历史；Podnook 之后可以长成「多功能个人工具�
 - **默认呼出热键 ⌘⇧V**（NSH keystroke 写作 `mod+shift+v`），可在设置里按组合键录制修改。全局热键是独占的：若被 Raycast 等 App 占用会注册失败，设置会提示换一个。
 - **数据本地持久化**：`rusqlite`（`history.db`）+ 图片文件缓存；默认保留 1000 条或 30 天，pin 永不过期。
 - **复制统计**：`copy_count` 按捕获去重累加；粘贴/复制后只更新最近使用时间并置顶，不增加次数。旧库启动时自动补列并计为 1。
-- **隐私默认**：默认忽略 1Password、Bitwarden、Keychain、Passwords 等来源 App，可在设置里增删。
+- **隐私默认**：默认只忽略系统「密码」App（com.apple.Passwords）；其它 App 在设置里点「选择 App…」从运行中的应用选择，或手动填 bundle id。
 - **图片尺寸**：记录和显示逻辑尺寸（points，如 499×381），与 Finder/Raycast 一致；PNG 缓存仍是全分辨率，旧条目启动时自动迁移。
 - **窗口形态**：无边框（`frame: "none"`）+ 透明 + 14pt 圆角 + 系统阴影；顶部栏作为拖动区域，不显示系统标题栏。
 - **玻璃质感**：主面板、设置、编辑窗口用 `NSVisualEffectView`（Popover 材质、behind-window 模糊）+ 半透明主题色；面板背后透出桌面模糊。
