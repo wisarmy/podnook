@@ -33,39 +33,63 @@ pub fn settings() -> impl IntoElement {
     let confirm_clear = signal(false);
     let trusted = signal(crate::paste::is_trusted());
 
-    // 呼出热键：按下组合键录制
-    let record_control = view()
-        .flex_row()
-        .items_center()
-        .gap_3()
-        .child(dynamic(move || {
-            if recording.get() {
-                text("请按下组合键…")
-                    .text_size(px(12.0))
-                    .text_color(theme::primary())
-            } else {
-                text(key_label(&hotkey.get()))
-                    .text_size(px(12.0))
-                    .text_color(theme::muted_fg())
-            }
-        }))
-        .child(dynamic(move || {
-            if recording.get() {
-                choice("取消", || true, move || {
-                    crate::hotkey_recorder::cancel();
-                    recording.set(false);
-                    crate::register_hotkey(&hotkey.get());
-                    show_notice(notice, "已取消");
-                })
-            } else {
-                choice("录制", || false, move || {
-                    recording.set(true);
-                    crate::suspend_hotkey();
-                    crate::hotkey_recorder::start();
-                    show_notice(notice, "请按下组合键；Esc 取消");
-                })
-            }
-        }));
+    // 呼出热键：点字段直接录制，Recording 状态内联在字段里。
+    let start_recording = move || {
+        recording.set(true);
+        crate::suspend_hotkey();
+        crate::hotkey_recorder::start();
+    };
+    let cancel_recording = move || {
+        crate::hotkey_recorder::cancel();
+        recording.set(false);
+        crate::register_hotkey(&hotkey.get());
+        show_notice(notice, "已取消");
+    };
+    let record_control = dynamic(move || {
+        if recording.get() {
+            view()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .px_3()
+                .py_2()
+                .rounded(px(8.0))
+                .bg(theme::glass_card())
+                .border_1()
+                .border_color(theme::primary())
+                .child(
+                    view()
+                        .flex_col()
+                        .gap_1()
+                        .child(
+                            text("录制中…")
+                                .text_size(px(11.0))
+                                .text_color(theme::primary()),
+                        )
+                        .child(
+                            text("例如 ⇧⌘Space")
+                                .text_size(px(10.0))
+                                .text_color(theme::muted_fg()),
+                        ),
+                )
+                .child(choice("×", || false, cancel_recording))
+        } else {
+            view()
+                .on_press(start_recording)
+                .cursor_pointer()
+                .px_3()
+                .py_2()
+                .rounded(px(8.0))
+                .bg(theme::glass_card())
+                .border_1()
+                .border_color(theme::border())
+                .child(
+                    text(key_label(&hotkey.get()))
+                        .text_size(px(12.0))
+                        .text_color(theme::fg()),
+                )
+        }
+    });
 
     let store_for_poll = store.clone();
     set_interval(std::time::Duration::from_millis(100), move || {
@@ -441,14 +465,7 @@ pub fn settings() -> impl IntoElement {
                 .gap_5()
                 .child(settings_section(
                     "呼出",
-                    view()
-                        .flex_col()
-                        .child(setting_row("呼出热键", record_control))
-                        .child(view().px_4().pb_3().child(
-                            text("点「录制」后直接按下组合键；至少包含 mod / ctrl / alt，Esc 取消。")
-                                .text_size(px(11.0))
-                                .text_color(theme::muted_fg()),
-                        )),
+                    view().flex_col().child(setting_row("呼出热键", record_control)),
                 ))
                 .child(settings_section("历史", history_rows))
                 .child(settings_section("粘贴", paste_rows))
