@@ -489,16 +489,10 @@ fn actions_overlay_inner(state: State) -> View {
     if !state.actions_open.get() {
         return view();
     }
-    let title = match state.actions_mode.get() {
-        ActionMode::Main => "操作",
-        ActionMode::Range => "删除最近…",
-        ActionMode::ConfirmAll => "清空全部",
-        ActionMode::SaveFile => "保存为文件",
-    };
     let selected = state.actions_selected.get();
     let items = action_items(&state);
 
-    let mut list = view().flex_col().p_2().overflow_hidden();
+    let mut list = view().flex_col().flex_1().p_2().overflow_hidden();
     if items.is_empty() {
         list = list.child(
             text("没有匹配的操作")
@@ -518,6 +512,7 @@ fn actions_overlay_inner(state: State) -> View {
         let escape_state = state.clone();
         view()
             .flex_col()
+            .flex_1()
             .p_3()
             .gap_2()
             .child(
@@ -567,10 +562,10 @@ fn actions_overlay_inner(state: State) -> View {
         .child(
             view()
                 .absolute()
-                .top(px(64.0))
-                .right(px(20.0))
-                .w(px(360.0))
-                .max_h(px(520.0))
+                .top(px(8.0))
+                .left(px(8.0))
+                .right(px(8.0))
+                .bottom(px(44.0))
                 .z_index(41)
                 .flex_col()
                 .rounded(px(12.0))
@@ -579,18 +574,6 @@ fn actions_overlay_inner(state: State) -> View {
                 .border_color(theme::border())
                 .shadow_lg()
                 .overflow_hidden()
-                .child(
-                    view()
-                        .flex_row()
-                        .items_center()
-                        .justify_between()
-                        .px_4()
-                        .py_3()
-                        .border_b(px(1.0))
-                        .border_b_color(theme::border())
-                        .child(text(title).text_size(px(12.0)).text_color(theme::muted_fg()))
-                        .child(text("⌘K 关闭").text_size(px(11.0)).text_color(theme::muted_fg())),
-                )
                 .child(body)
                 .child(if save_mode {
                     view()
