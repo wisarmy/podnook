@@ -492,7 +492,7 @@ fn actions_overlay_inner(state: State) -> View {
     let selected = state.actions_selected.get();
     let items = action_items(&state);
 
-    let mut list = view().flex_col().flex_1().p_2().overflow_hidden();
+    let mut list = view().flex_col().p_2().overflow_hidden();
     if items.is_empty() {
         list = list.child(
             text("没有匹配的操作")
@@ -512,7 +512,6 @@ fn actions_overlay_inner(state: State) -> View {
         let escape_state = state.clone();
         view()
             .flex_col()
-            .flex_1()
             .p_3()
             .gap_2()
             .child(
@@ -556,20 +555,24 @@ fn actions_overlay_inner(state: State) -> View {
         .child(
             view()
                 .absolute()
-                .inset(px(0.0))
+                .top(px(0.0))
+                .left(px(0.0))
+                .right(px(0.0))
+                .bottom(px(44.0))
+                .bg(theme::bg().opacity(0.30))
                 .on_press(move || close_actions(&backdrop_state)),
         )
         .child(
             view()
                 .absolute()
-                .top(px(8.0))
-                .left(px(8.0))
-                .right(px(8.0))
-                .bottom(px(44.0))
+                .bottom(px(52.0))
+                .right(px(16.0))
+                .w(px(440.0))
+                .max_h(px(520.0))
                 .z_index(41)
                 .flex_col()
                 .rounded(px(12.0))
-                .bg(theme::surface())
+                .bg(theme::card())
                 .border_1()
                 .border_color(theme::border())
                 .shadow_lg()
@@ -621,7 +624,7 @@ fn action_row(state: State, item: ActionItem, selected: bool) -> View {
             if selected {
                 theme::accent()
             } else {
-                theme::surface()
+                theme::card()
             }
         })
         .on_press(move || {
