@@ -65,6 +65,11 @@ pub fn glass_accent() -> AdaptiveColor {
     accent().opacity(0.72)
 }
 
+/// 成功状态（新热键已设置等）。
+pub fn success() -> AdaptiveColor {
+    AdaptiveColor::rgb(0x2F8F5B, 0x5FBF8A)
+}
+
 /// 危险操作（删除、清空）。
 pub fn danger() -> AdaptiveColor {
     AdaptiveColor::rgb(0xB5432F, 0xE06A55)

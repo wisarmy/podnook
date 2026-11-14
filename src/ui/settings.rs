@@ -20,6 +20,7 @@ pub fn settings() -> impl IntoElement {
 
     let hotkey = signal(config.hotkey.clone());
     let recording = signal(false);
+    let success = signal(None::<String>);
     let count = signal(config.retention_count);
     let days = signal(config.retention_days);
     let auto_paste = signal(config.auto_paste);
@@ -35,15 +36,14 @@ pub fn settings() -> impl IntoElement {
 
     // 呼出热键：点字段直接录制；录制提示用字段上方的浮层。
     let start_recording = move || {
+        // 设置窗口是非激活浮层；录制前主动拿键盘，本地按键监听才能收到事件。
+        let window = nsh_core::element::desktop::current_window();
+        window.focus();
+        set_timeout(std::time::Duration::from_millis(40), move || window.focus());
+        success.set(None);
         recording.set(true);
         crate::suspend_hotkey();
         crate::hotkey_recorder::start();
-    };
-    let cancel_recording = move || {
-        crate::hotkey_recorder::cancel();
-        recording.set(false);
-        crate::register_hotkey(&hotkey.get());
-        show_notice(notice, "已取消");
     };
     let record_control = view()
         .relative()
@@ -57,23 +57,24 @@ pub fn settings() -> impl IntoElement {
                 .bg(theme::surface())
                 .border_1()
                 .border_color(move || {
-                    if recording.get() {
+                    if recording.get() || success.get().is_some() {
                         theme::primary()
                     } else {
                         theme::border()
                     }
                 })
-                .child(
+                .child(dynamic(move || {
                     text(key_label(&hotkey.get()))
                         .text_size(px(12.0))
-                        .text_color(theme::fg()),
-                ),
+                        .text_color(theme::fg())
+                })),
         )
         .child(dynamic(move || {
-            if !recording.get() {
+            if !recording.get() && success.get().is_none() {
                 return view();
             }
-            view()
+            let saved = success.get();
+            let mut popover = view()
                 .absolute()
                 .top(px(40.0))
                 .right(px(0.0))
@@ -88,29 +89,63 @@ pub fn settings() -> impl IntoElement {
                 .py_3()
                 .flex_col()
                 .items_center()
-                .gap_1()
-                .child(
-                    view().w_full().flex_row().justify_end().child(
+                .gap_1();
+            let dismiss_state = success;
+            let dismiss = move || {
+                let was_success = dismiss_state.get().is_some();
+                crate::hotkey_recorder::cancel();
+                recording.set(false);
+                dismiss_state.set(None);
+                if !was_success {
+                    crate::register_hotkey(&hotkey.get());
+                    show_notice(notice, "已取消");
+                }
+            };
+            popover = popover.child(
+                view().w_full().flex_row().justify_end().child(
+                    view()
+                        .on_press(dismiss)
+                        .cursor_pointer()
+                        .child(
+                            text("×")
+                                .text_size(px(12.0))
+                                .text_color(theme::muted_fg()),
+                        ),
+                ),
+            );
+            if let Some(key) = saved {
+                popover = popover
+                    .child(
                         view()
-                            .on_press(cancel_recording)
-                            .cursor_pointer()
+                            .px_3()
+                            .py_1()
+                            .rounded(px(6.0))
+                            .bg(theme::success().opacity(0.18))
                             .child(
-                                text("×")
-                                    .text_size(px(12.0))
-                                    .text_color(theme::muted_fg()),
+                                text(key_label(&key))
+                                    .text_size(px(13.0))
+                                    .text_color(theme::success()),
                             ),
-                    ),
-                )
-                .child(
-                    text("例如 ⇧⌘Space")
-                        .text_size(px(12.0))
-                        .text_color(theme::muted_fg()),
-                )
-                .child(
-                    text("录制中…")
-                        .text_size(px(13.0))
-                        .text_color(theme::fg()),
-                )
+                    )
+                    .child(
+                        text("已设置新热键")
+                            .text_size(px(13.0))
+                            .text_color(theme::fg()),
+                    );
+            } else {
+                popover = popover
+                    .child(
+                        text("例如 ⇧⌘Space")
+                            .text_size(px(12.0))
+                            .text_color(theme::muted_fg()),
+                    )
+                    .child(
+                        text("录制中…")
+                            .text_size(px(13.0))
+                            .text_color(theme::fg()),
+                    );
+            }
+            popover
         }));
 
     let store_for_poll = store.clone();
@@ -124,18 +159,36 @@ pub fn settings() -> impl IntoElement {
         recording.set(false);
         match result {
             Some(key) => {
+                let previous = hotkey.get();
+                let key_for_result = key.clone();
+                let previous_for_result = previous.clone();
+                let hotkey_signal = hotkey;
+                let success_signal = success;
+                let notice_signal = notice;
+                let store_for_result = store_for_poll.clone();
                 if crate::register_hotkey_with(&key, move |ok| {
-                    if !ok {
-                        show_notice(notice, "被其他 App 占用，换一个组合");
+                    if ok {
+                        hotkey_signal.set(key_for_result.clone());
+                        if let Some(store) = &store_for_result {
+                            prefs::write(store, SETTING_HOTKEY, &key_for_result);
+                        }
+                        success_signal.set(Some(key_for_result.clone()));
+                        let clear = success_signal;
+                        set_timeout(std::time::Duration::from_millis(1200), move || {
+                            clear.set(None)
+                        });
+                        show_notice(notice_signal, "已应用");
+                    } else {
+                        // 被占用时不落库，恢复原来的热键。
+                        hotkey_signal.set(previous_for_result.clone());
+                        crate::register_hotkey(&previous_for_result);
+                        success_signal.set(None);
+                        show_notice(notice_signal, "被其他 App 占用，换一个组合");
                     }
                 }) {
-                    hotkey.set(key.clone());
-                    if let Some(store) = &store_for_poll {
-                        prefs::write(store, SETTING_HOTKEY, &key);
-                    }
-                    show_notice(notice, "已应用");
+                    // 注册已发出；结果在回调里决定是否落库。
                 } else {
-                    crate::register_hotkey(&hotkey.get());
+                    crate::register_hotkey(&previous);
                     show_notice(notice, "组合键无效");
                 }
             }
@@ -487,7 +540,7 @@ pub fn settings() -> impl IntoElement {
                 .gap_5()
                 .child(
                     view()
-                        .z_index(move || if recording.get() { 20 } else { 0 })
+                        .z_index(move || if recording.get() || success.get().is_some() { 20 } else { 0 })
                         .child(settings_section(
                             "呼出",
                             view().flex_col().child(setting_row("呼出热键", record_control)),
