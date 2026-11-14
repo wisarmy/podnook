@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS clips (
   truncated      INTEGER NOT NULL DEFAULT 0,
   created_at     INTEGER NOT NULL,
   last_copied_at INTEGER NOT NULL,
+  copy_count     INTEGER NOT NULL DEFAULT 0,
   pinned         INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS clips_order ON clips(pinned DESC, last_copied_at DESC);
@@ -68,6 +69,23 @@ pub struct Store {
     self_write: Mutex<Option<String>>,
 }
 
+/// 旧库升级：补上 copy_count 列，并把已有条目计为复制过一次。
+fn migrate(conn: &Connection) -> rusqlite::Result<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(clips)")?;
+    let columns: Vec<String> = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<_>>()?;
+    drop(stmt);
+    if !columns.iter().any(|name| name == "copy_count") {
+        conn.execute(
+            "ALTER TABLE clips ADD COLUMN copy_count INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+        conn.execute("UPDATE clips SET copy_count = 1", [])?;
+    }
+    Ok(())
+}
+
 impl Store {
     /// 打开（或创建）`dir` 下的历史库。
     pub fn open(dir: &Path) -> rusqlite::Result<Self> {
@@ -77,6 +95,7 @@ impl Store {
         let conn = Connection::open(dir.join("history.db"))?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
         conn.execute_batch(SCHEMA)?;
+        migrate(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
             dir: dir.to_path_buf(),
@@ -92,6 +111,7 @@ impl Store {
         })?;
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA)?;
+        migrate(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
             dir,
@@ -232,6 +252,7 @@ impl Store {
             conn.execute(
                 "UPDATE clips SET
                    last_copied_at = ?1,
+                   copy_count = copy_count + 1,
                    source_app = COALESCE(?2, source_app),
                    source_bundle = COALESCE(?3, source_bundle)
                  WHERE id = ?4",
@@ -245,8 +266,8 @@ impl Store {
             "INSERT INTO clips
                (kind, content, preview, hash, image_path, image_w, image_h, image_bytes,
                 file_uris, source_app, source_bundle, byte_size, truncated,
-                created_at, last_copied_at, pinned)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14, 0)",
+                created_at, last_copied_at, copy_count, pinned)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14, 1, 0)",
             params![
                 clip.kind.as_str(),
                 clip.content,
@@ -273,7 +294,7 @@ impl Store {
         let mut stmt = conn.prepare(
             "SELECT id, kind, content, preview, hash, image_path, image_w, image_h,
                     image_bytes, file_uris, source_app, source_bundle, byte_size,
-                    truncated, created_at, last_copied_at, pinned
+                    truncated, created_at, last_copied_at, pinned, copy_count
              FROM clips
              ORDER BY pinned DESC, last_copied_at DESC
              LIMIT ?1",
@@ -301,9 +322,20 @@ impl Store {
                 created_at: row.get(14)?,
                 last_copied_at: row.get(15)?,
                 pinned: row.get::<_, i64>(16)? != 0,
+                copy_count: row.get(17)?,
             })
         })?;
         rows.collect()
+    }
+
+    /// 粘贴/复制后把条目置顶（不增加复制次数；次数按捕获计）。
+    pub fn touch_usage(&self, id: i64, now: i64) -> rusqlite::Result<()> {
+        let conn = self.lock();
+        conn.execute(
+            "UPDATE clips SET last_copied_at = ?1 WHERE id = ?2",
+            params![now, id],
+        )?;
+        Ok(())
     }
 
     /// 修正图片条目的尺寸（迁移旧的像素尺寸到逻辑点数）。
@@ -379,12 +411,15 @@ impl Store {
         Ok((count, days))
     }
 
-    /// 被忽略来源 App 的 bundle id 列表。
+    /// 被忽略来源 App 的 bundle id 列表；没设置过时返回默认的密码管理器列表。
     pub fn ignored_bundles(&self) -> rusqlite::Result<Vec<String>> {
-        Ok(self
-            .get_setting(SETTING_IGNORED_BUNDLES)?
-            .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
-            .unwrap_or_default())
+        match self.get_setting(SETTING_IGNORED_BUNDLES)? {
+            Some(json) => Ok(serde_json::from_str::<Vec<String>>(&json).unwrap_or_default()),
+            None => Ok(crate::DEFAULT_IGNORED_BUNDLES
+                .iter()
+                .map(|bundle| (*bundle).to_string())
+                .collect()),
+        }
     }
 
     /// 编辑文本/链接条目的内容，重新计算类型、预览、哈希与大小。
@@ -525,6 +560,75 @@ mod tests {
         assert_eq!(rows[0].last_copied_at, 200);
         assert_eq!(rows[0].created_at, 100);
         assert_eq!(rows[0].preview, "hello");
+        assert_eq!(rows[0].copy_count, 2);
+    }
+
+    #[test]
+    fn usage_touch_moves_entry_to_top() {
+        let store = store();
+        store.capture(text_clip("a"), 100).unwrap();
+        store.capture(text_clip("b"), 200).unwrap();
+        let a = store
+            .list(10)
+            .unwrap()
+            .into_iter()
+            .find(|clip| clip.preview == "a")
+            .unwrap();
+        store.touch_usage(a.id, 300).unwrap();
+        let rows = store.list(10).unwrap();
+        assert_eq!(rows[0].preview, "a");
+        assert_eq!(rows[0].copy_count, 1);
+    }
+
+    #[test]
+    fn ignored_bundles_default_to_password_managers() {
+        let store = store();
+        assert!(
+            store
+                .ignored_bundles()
+                .unwrap()
+                .iter()
+                .any(|bundle| bundle == "com.1password.1password")
+        );
+        store.set_setting(SETTING_IGNORED_BUNDLES, "[]").unwrap();
+        assert!(store.ignored_bundles().unwrap().is_empty());
+    }
+
+    #[test]
+    fn migrates_copy_count_for_existing_databases() {
+        let dir = std::env::temp_dir().join(format!("podnook-migrate-{}", now_secs_nanos()));
+        std::fs::create_dir_all(&dir).unwrap();
+        {
+            let conn = Connection::open(dir.join("history.db")).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE clips (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   kind TEXT NOT NULL,
+                   content TEXT,
+                   preview TEXT NOT NULL DEFAULT '',
+                   hash TEXT NOT NULL UNIQUE,
+                   image_path TEXT,
+                   image_w INTEGER,
+                   image_h INTEGER,
+                   image_bytes INTEGER,
+                   file_uris TEXT,
+                   source_app TEXT,
+                   source_bundle TEXT,
+                   byte_size INTEGER NOT NULL DEFAULT 0,
+                   truncated INTEGER NOT NULL DEFAULT 0,
+                   created_at INTEGER NOT NULL,
+                   last_copied_at INTEGER NOT NULL,
+                   pinned INTEGER NOT NULL DEFAULT 0
+                 );
+                 INSERT INTO clips
+                   (kind, content, preview, hash, byte_size, truncated, created_at, last_copied_at, pinned)
+                 VALUES ('text', 'hi', 'hi', 'hash', 2, 0, 1, 1, 0);",
+            )
+            .unwrap();
+        }
+        let store = Store::open(&dir).unwrap();
+        let row = store.list(1).unwrap().remove(0);
+        assert_eq!(row.copy_count, 1);
     }
 
     #[test]

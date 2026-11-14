@@ -96,6 +96,8 @@ enum ActionKind {
     Pin,
     SaveFile,
     SaveNow,
+    Open,
+    Reveal,
     Delete,
     DeleteEntries,
     DeleteAll,
@@ -419,6 +421,38 @@ fn expand_tilde(path: &str) -> PathBuf {
         }
     }
     PathBuf::from(path)
+}
+
+fn open_selected(state: &State) {
+    let Some(clip) = selected_clip(state) else {
+        return;
+    };
+    match clip.kind {
+        ClipKind::Link => {
+            if let Some(url) = &clip.content {
+                crate::paste::open_external(url);
+            }
+        }
+        ClipKind::File => {
+            if let Some(path) = clip.file_uris.first() {
+                let _ = nsh_core::element::open_path(path);
+            }
+        }
+        _ => flash(state, "这个条目不能打开"),
+    }
+}
+
+fn reveal_selected(state: &State) {
+    let Some(clip) = selected_clip(state) else {
+        return;
+    };
+    if clip.kind == ClipKind::File {
+        if let Some(path) = clip.file_uris.first() {
+            let _ = nsh_core::element::reveal_path(path);
+        }
+    } else {
+        flash(state, "只有文件条目可以在 Finder 中显示");
+    }
 }
 
 fn save_target(clip: &Clip) -> Option<(String, SaveData)> {
@@ -760,6 +794,29 @@ fn format_time(secs: i64) -> String {
     }
 }
 
+fn word_count(text: &str) -> usize {
+    let mut count = 0;
+    let mut in_word = false;
+    for c in text.chars() {
+        let cjk = matches!(
+            c as u32,
+            0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF | 0x3040..=0x30FF | 0xAC00..=0xD7AF
+        );
+        if cjk {
+            count += 1;
+            in_word = false;
+        } else if c.is_alphanumeric() || c == '_' {
+            if !in_word {
+                count += 1;
+                in_word = true;
+            }
+        } else {
+            in_word = false;
+        }
+    }
+    count
+}
+
 fn human_size(bytes: i64) -> String {
     let bytes = bytes.max(0);
     if bytes < 1024 {
@@ -1049,6 +1106,36 @@ fn action_items(state: &State) -> Vec<ActionItem> {
         items.retain(|item| item.kind != ActionKind::Edit);
     }
 
+    if state.actions_mode.get() == ActionMode::Main {
+        let kind = selected_clip(state).map(|clip| clip.kind);
+        if matches!(kind, Some(ClipKind::Link) | Some(ClipKind::File)) {
+            items.insert(
+                2,
+                ActionItem {
+                    kind: ActionKind::Open,
+                    label: if kind == Some(ClipKind::Link) {
+                        "打开链接".into()
+                    } else {
+                        "打开文件".into()
+                    },
+                    shortcut: "mod+o",
+                    destructive: false,
+                },
+            );
+        }
+        if kind == Some(ClipKind::File) {
+            items.insert(
+                3,
+                ActionItem {
+                    kind: ActionKind::Reveal,
+                    label: "在 Finder 中显示".into(),
+                    shortcut: "mod+shift+o",
+                    destructive: false,
+                },
+            );
+        }
+    }
+
     let query = state.actions_query.get().trim().to_lowercase();
     if !query.is_empty() {
         items.retain(|item| item.label.to_lowercase().contains(&query));
@@ -1093,6 +1180,14 @@ fn run_action(state: &State, store: Option<&Store>, kind: ActionKind) {
             }
         }
         ActionKind::SaveNow => save_now(state),
+        ActionKind::Open => {
+            open_selected(state);
+            close_actions(state);
+        }
+        ActionKind::Reveal => {
+            reveal_selected(state);
+            close_actions(state);
+        }
         ActionKind::Pin => {
             toggle_pin(state, store);
             close_actions(state);
@@ -1227,6 +1322,8 @@ fn activate_selected(state: &State, store: Option<&Store>, paste: bool) {
     };
     if let Some(store) = store {
         store.mark_self_write(written_hash);
+        let _ = store.touch_usage(clip.id, now_secs());
+        crate::history::bump();
     }
 
     if paste {
@@ -1609,7 +1706,8 @@ fn information(clip: Clip) -> impl IntoElement {
                 .text_color(theme::muted_fg()),
         )
         .child(info_row("来源", source))
-        .child(info_row("类型", clip.kind.label().to_string()));
+        .child(info_row("类型", clip.kind.label().to_string()))
+        .child(info_row("复制次数", clip.copy_count.to_string()));
 
     if clip.kind == ClipKind::Image {
         if let (Some(w), Some(h)) = (clip.image_w, clip.image_h) {
@@ -1621,7 +1719,9 @@ fn information(clip: Clip) -> impl IntoElement {
     }
     if matches!(clip.kind, ClipKind::Text | ClipKind::Link) {
         if let Some(content) = &clip.content {
-            info = info.child(info_row("字符数", content.chars().count().to_string()));
+            info = info
+                .child(info_row("字符数", content.chars().count().to_string()))
+                .child(info_row("字数", word_count(content).to_string()));
         }
     }
     if !clip.file_uris.is_empty() {

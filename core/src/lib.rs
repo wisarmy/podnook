@@ -33,6 +33,19 @@ pub const SETTING_HOTKEY: &str = "hotkey";
 pub const SETTING_AUTO_PASTE: &str = "auto_paste";
 pub const SETTING_LAUNCH_AT_LOGIN: &str = "launch_at_login";
 
+/// 默认忽略的来源 App：密码管理器/钥匙串，避免敏感内容进历史。
+pub const DEFAULT_IGNORED_BUNDLES: &[&str] = &[
+    "com.1password.1password",
+    "com.agilebits.onepassword7",
+    "com.bitwarden.desktop",
+    "com.dashlane.dashlanephonefinal",
+    "com.lastpass.LastPass",
+    "com.apple.keychainaccess",
+    "com.apple.Passwords",
+    "in.sinew.Enpass-Desktop",
+    "org.keepassxc.keepassxc",
+];
+
 /// 条目的类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClipKind {
@@ -146,6 +159,7 @@ pub struct Clip {
     pub created_at: i64,
     pub last_copied_at: i64,
     pub pinned: bool,
+    pub copy_count: i64,
 }
 
 /// 当前 Unix 时间（秒）。

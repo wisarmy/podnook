@@ -2,7 +2,8 @@
 
 use podnook_core::db::Store;
 use podnook_core::{
-    SETTING_AUTO_PASTE, SETTING_HOTKEY, SETTING_RETENTION_COUNT, SETTING_RETENTION_DAYS,
+    DEFAULT_IGNORED_BUNDLES, SETTING_AUTO_PASTE, SETTING_HOTKEY, SETTING_RETENTION_COUNT,
+    SETTING_RETENTION_DAYS,
 };
 
 /// 默认呼出热键。
@@ -24,7 +25,10 @@ impl Default for Settings {
             retention_count: 1000,
             retention_days: 30,
             auto_paste: true,
-            ignored_bundles: Vec::new(),
+            ignored_bundles: DEFAULT_IGNORED_BUNDLES
+                .iter()
+                .map(|bundle| (*bundle).to_string())
+                .collect(),
         }
     }
 }
