@@ -498,7 +498,7 @@ fn actions_overlay_inner(state: State) -> View {
     let selected = state.actions_selected.get();
     let items = action_items(&state);
 
-    let mut list = view().flex_col().gap_1().p_2().overflow_hidden();
+    let mut list = view().flex_col().p_2().overflow_hidden();
     if items.is_empty() {
         list = list.child(
             text("没有匹配的操作")
@@ -1661,19 +1661,14 @@ fn footer_inner(state: State) -> impl IntoElement {
         format!("剪贴板历史 · {visible} / {total} 条")
     };
     let mut right = view().flex_row().items_center().gap_4();
-    right = match state.flash.get() {
-        Some(message) => right.child(
+    if let Some(message) = state.flash.get() {
+        right = right.child(
             text(message)
                 .text_size(px(12.0))
                 .text_color(theme::primary()),
-        ),
-        None => right
-            .child(hint("粘贴", key_label("enter")))
-            .child(hint("操作", key_label("mod+k")))
-            .child(hint("固定", key_label("shift+mod+p")))
-            .child(hint("筛选", key_label("mod+p")))
-            .child(hint("删除", key_label("ctrl+x"))),
-    };
+        );
+    }
+    right = right.child(actions_button(state.clone()));
 
     view()
         .flex_row()
@@ -1698,28 +1693,26 @@ fn footer_inner(state: State) -> impl IntoElement {
         .child(right)
 }
 
-fn hint(label: &'static str, key: String) -> impl IntoElement {
+fn actions_button(state: State) -> impl IntoElement {
     view()
+        .on_press(move || enter_action_mode(&state, ActionMode::Main))
         .flex_row()
         .items_center()
         .gap_2()
+        .px_3()
+        .py_1()
+        .rounded(px(6.0))
+        .bg(theme::glass_card())
+        .border_1()
+        .border_color(theme::border())
         .child(
-            text(label)
+            text("操作")
                 .text_size(px(12.0))
                 .text_color(theme::muted_fg()),
         )
         .child(
-            view()
-                .px_2()
-                .py_1()
-                .rounded(px(5.0))
-                .bg(theme::card())
-                .border_1()
-                .border_color(theme::border())
-                .child(
-                    text(key.to_string())
-                        .text_size(px(11.0))
-                        .text_color(theme::muted_fg()),
-                ),
+            text(key_label("mod+k"))
+                .text_size(px(11.0))
+                .text_color(theme::muted_fg()),
         )
 }
