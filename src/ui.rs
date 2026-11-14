@@ -486,9 +486,7 @@ fn actions_overlay(state: State) -> impl IntoElement {
 }
 
 fn actions_overlay_inner(state: State) -> View {
-    if !state.actions_open.get() {
-        return view();
-    }
+    let open = state.actions_open;
     let selected = state.actions_selected.get();
     let items = action_items(&state);
 
@@ -552,6 +550,18 @@ fn actions_overlay_inner(state: State) -> View {
         .absolute()
         .inset(px(0.0))
         .z_index(40)
+        .opacity(move || if open.get() { 1.0_f32 } else { 0.0_f32 })
+        .pointer_events(move || {
+            if open.get() {
+                PointerEvents::BoxNone
+            } else {
+                PointerEvents::None
+            }
+        })
+        .transition_opacity()
+        .transition_transform()
+        .duration(190.0_f32)
+        .ease_out()
         .child(
             view()
                 .absolute()
@@ -577,6 +587,12 @@ fn actions_overlay_inner(state: State) -> View {
                 .border_color(theme::border())
                 .shadow_lg()
                 .overflow_hidden()
+                .origin_bottom_right()
+                .scale(move || if open.get() { 1.0_f32 } else { 0.965_f32 })
+                .translate_y(move || if open.get() { px(0.0) } else { px(14.0) })
+                .transition_transform()
+                .duration(220.0_f32)
+                .ease_out()
                 .child(body)
                 .child(if save_mode {
                     view()
@@ -899,11 +915,17 @@ fn enter_save_mode(state: &State) {
 
 fn close_actions(state: &State) {
     state.actions_open.set(false);
-    state.actions_mode.set(ActionMode::Main);
-    state.actions_query.set(String::new());
-    state.actions_selected.set(0);
-    let search = state.search;
-    set_timeout(Duration::from_millis(30), move || search.focus());
+    // 等内容淡出后再重置模式并把焦点还给主搜索，避免关闭动画里内容跳变。
+    let state = state.clone();
+    set_timeout(Duration::from_millis(240), move || {
+        if state.actions_open.get() {
+            return;
+        }
+        state.actions_mode.set(ActionMode::Main);
+        state.actions_query.set(String::new());
+        state.actions_selected.set(0);
+        state.search.focus();
+    });
 }
 
 fn move_action(state: &State, delta: isize) {
@@ -1681,7 +1703,13 @@ fn footer_inner(state: State) -> impl IntoElement {
 
 fn actions_button(state: State) -> impl IntoElement {
     view()
-        .on_press(move || enter_action_mode(&state, ActionMode::Main))
+        .on_press(move || {
+            if state.actions_open.get() {
+                close_actions(&state);
+            } else {
+                enter_action_mode(&state, ActionMode::Main);
+            }
+        })
         .flex_row()
         .items_center()
         .gap_2()
