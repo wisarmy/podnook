@@ -559,8 +559,7 @@ fn actions_overlay_inner(state: State) -> View {
             }
         })
         .transition_opacity()
-        .transition_transform()
-        .duration(190.0_f32)
+        .duration(150.0_f32)
         .ease_out()
         .child(
             view()
@@ -569,7 +568,7 @@ fn actions_overlay_inner(state: State) -> View {
                 .left(px(0.0))
                 .right(px(0.0))
                 .bottom(px(44.0))
-                .bg(theme::bg().opacity(0.30))
+                .bg(theme::bg().opacity(0.01))
                 .on_press(move || close_actions(&backdrop_state)),
         )
         .child(
@@ -585,13 +584,11 @@ fn actions_overlay_inner(state: State) -> View {
                 .bg(theme::card())
                 .border_1()
                 .border_color(theme::border())
-                .shadow_lg()
+                .shadow_md()
                 .overflow_hidden()
-                .origin_bottom_right()
-                .scale(move || if open.get() { 1.0_f32 } else { 0.965_f32 })
-                .translate_y(move || if open.get() { px(0.0) } else { px(14.0) })
+                .translate_y(move || if open.get() { px(0.0) } else { px(8.0) })
                 .transition_transform()
-                .duration(220.0_f32)
+                .duration(170.0_f32)
                 .ease_out()
                 .child(body)
                 .child(if save_mode {
