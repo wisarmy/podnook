@@ -37,6 +37,14 @@ security find-generic-password -s com.podnook.release-signing -w
 
 换机器或重装系统前，把 `.p12` 和密码一起备份到密码管理器；只备份 `.p12` 而没有密码，等于没有私钥。
 
+## 签名身份与内部说明
+
+- 身份：`Podnook Release Signing`
+- SHA-1：`3F:49:68:CB:31:C2:7E:6D:FD:FD:B4:E3:20:72:16:B9:13:0E:F3:A3`
+- 当前 designated requirement：`identifier "com.podnook.app" and certificate leaf = H"3f4968cb31c27e6dfdfdb4e3207216b9130ef3a3"`（以 `codesign -d -r-` 输出为准）
+- 当前没有 Developer ID / notarization，这是 v1 的已知限制。若将来购买开发者账号并切换签名身份，用户会再被要求授权一次，需要先发公告。
+- 公开 Release 只写用户安装步骤和“未公证所以首次需放行”；证书指纹、DR、开发者账号采购计划只留在本文档。
+
 ## 发布一个版本
 
 1. 改 `nsh.json` 的 `version`（例如 `0.1.0`），提交。
