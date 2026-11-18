@@ -2,48 +2,198 @@
 
 > A pod for everything you keep. / 把每件你在乎的事，都收进一只豆荚。
 
-本地优先、开源的 macOS **剪贴板历史**工具。复制过的一切留在本机，一个快捷键召回、搜索、粘回，绝不上传。
+A local-first, open-source **clipboard history** for macOS. Everything you copy stays on your Mac: summon it with one hotkey, search, pin, and paste it back into any app. Nothing is uploaded.
 
-产品定位、领域词汇与决策记录见 [`CONTEXT.md`](CONTEXT.md)，架构决策见 [`docs/adr/`](docs/adr/)。
+Product context and decisions live in [`CONTEXT.md`](CONTEXT.md); architecture decisions in [`docs/adr/`](docs/adr/).
 
 <p align="center">
-  <img src="docs/images/panel.png" width="900" alt="Podnook 主面板：搜索、类型筛选、剪贴板列表与预览">
+  <img src="docs/images/panel.png" width="900" alt="Podnook main panel: search, type filters, clipboard list and preview">
 </p>
-<p align="center"><sub>主面板 · 示例数据</sub></p>
+<p align="center"><sub>Main panel · sample data</sub></p>
 
-## 状态
+## Status
 
-v0.1（M4 打包）。当前能力：菜单栏常驻、无 Dock 图标、全局热键
-⌘⇧V 呼出无边框浮层（其他 App 全屏时也能覆盖，失焦或 Esc 收起）；后台监听剪贴板（文本 / 图片 /
-文件 / 链接）、去重置顶、隐私标记过滤、SQLite 持久化；搜索、类型筛选、
-预览与元信息、pin、删除；回车自动粘回前台 App（⌘↵ 仅复制）。
-设置窗口（⌘, 或托盘菜单）：热键录制、保留期、自动粘回、开机自启、忽略 App、
-清空历史、权限状态；`make install` 打包、固定签名并安装到 `/Applications`。
+v0.1 (M4 packaged). What works today: menu-bar app without a Dock icon; a global
+⌘⇧V hotkey opens a frameless panel (it covers other apps' full-screen spaces;
+closes on blur or Esc); background clipboard capture (text / image / files /
+links), de-duplication, privacy-marker filtering, SQLite persistence; search,
+type filters, preview and metadata, pin, delete; Return pastes into the app you
+came from (⌘↵ only copies). The settings window (⌘, or the menu-bar menu) has
+hotkey recording, retention, auto-paste, launch at login, ignored apps, history
+clearing, permission status and the interface language. `make install` packages,
+signs with a fixed identity and installs into `/Applications`.
 
-计划与里程碑见 `CONTEXT.md`。
+The interface ships in English and Simplified Chinese; it follows the macOS
+language and can be switched in Settings.
 
-## 技术栈
+## Tech stack
 
-- [Native Shell](https://nsh.dev) **v0.5.0**（锁定版本）+ 纯 Rust，无 TSX / QuickJS
-- 系统层：`NSPasteboard` 轮询、`CGEventPost` 粘回、`SMAppService` 登录项
-- 存储：`rusqlite`（`history.db`）+ 图片文件缓存
+- [Native Shell](https://nsh.dev) **v0.5.0** (pinned) + pure Rust, no TSX / QuickJS
+- System layer: `NSPasteboard` polling, `CGEventPost` paste-back, `SMAppService` login item
+- Storage: `rusqlite` (`history.db`) plus an image file cache
+- Text: `locales/en.yml` and `locales/zh.yml` (rust-i18n format, loaded by NSH)
 
-> ⚠️ NSH 0.5 刚发布，官方文档站仍停留在 0.4。**一律以 tag `v0.5.0` 的 repo 文档为准**：
+> ⚠️ NSH 0.5 is new and the documentation site still describes 0.4. **The repo docs at tag `v0.5.0` are authoritative**:
 > `https://raw.githubusercontent.com/longbridge/nsh/v0.5.0/website/...`
 
-## 环境要求
+## Requirements
 
 - macOS 14+
-- Rust（edition 2024）
+- Rust (edition 2024)
 - NSH CLI **v0.5.0**
 
-安装 NSH CLI（**不要用 Homebrew**，它当前只到 v0.4.0）。NSH v0.5.0 的 macOS CLI 只有 arm64 归档；Intel Mac 请直接下载发布包：
+Install the NSH CLI (**not Homebrew**, which only has v0.4.0). The v0.5.0 macOS CLI ships as an arm64 archive only; on an Intel Mac download the release archive instead:
 
 ```sh
 curl -fsSL https://nsh.dev/install.sh | sh
-# 或下载 v0.5.0 归档：
+# or the v0.5.0 archive:
 # https://github.com/longbridge/nsh/releases/download/v0.5.0/nsh-macos-arm64.tar.gz
 ```
+
+## Development
+
+```sh
+nsh run          # run the Rust app (incremental build + restart)
+nsh check        # type/compile check
+nsh test         # headless tests (including the Rust unit tests)
+cargo test -p podnook-core   # domain and database tests, no NSH needed
+./scripts/check-strings.py   # fail on UI text hard-coded in src/
+```
+
+> ⚠️ NSH debug builds are large: the first full build of `target/` is about 15 GB
+> (dependencies compiled once per feature set). Run `cargo clean` when disk is
+> tight; incremental builds afterwards stay small.
+
+`PODNOOK_DATA_DIR` is for development only: it points the app at another data
+directory (screenshots, manual QA). Unset, the app uses the standard directory
+NSH assigns.
+
+```sh
+./scripts/seed-screenshots.py        # sample data into .nsh/screenshot-data
+PODNOOK_DATA_DIR=.nsh/screenshot-data nsh run
+make screenshot                      # regenerate docs/images/*.png
+```
+
+## Install
+
+### Download
+
+Get the DMG for your architecture from [GitHub Releases](https://github.com/wisarmy/podnook/releases):
+
+- `Podnook-<version>-arm64.dmg`: Apple Silicon (M1/M2/M3/M4)
+- `Podnook-<version>-x86_64.dmg`: Intel Mac
+
+Open the DMG and drag Podnook into Applications.
+
+Release builds are signed with a fixed self-signed certificate, so updates do
+not reset the Accessibility permission. They are not notarized by Apple, so the
+first launch is stopped by Gatekeeper once:
+
+1. Double-click the app; macOS says it cannot verify the developer;
+2. Open **System Settings → Privacy & Security** and press **Open Anyway** under Security;
+3. Or run: `xattr -dr com.apple.quarantine /Applications/Podnook.app`.
+
+The first run also needs Accessibility permission from Settings (paste-back uses it).
+
+### From source
+
+```sh
+make signing   # once: create the self-signed "Podnook Local Signing" certificate
+make install   # package → re-sign with that identity → verify → install into /Applications → launch
+```
+
+`nsh package` only produces `.nsh/out/Podnook.app`, which is **not** an install;
+`make install` replaces `/Applications/Podnook.app` and re-signs it.
+
+Why the fixed identity: macOS binds the Accessibility permission to the app's
+code signature. An ad-hoc signature's designated requirement is the binary's
+cdhash, which changes on every build and drops the permission. A fixed
+certificate's requirement is `identifier "com.podnook.app" and certificate leaf = H"…"`,
+so rebuilds keep the permission.
+
+Development uses `Podnook Local Signing`; GitHub releases use another fixed
+self-signed certificate, `Podnook Release Signing`, whose files live only in
+repository secrets. See [`docs/RELEASING.md`](docs/RELEASING.md).
+
+Permission is granted once: Settings → “Accessibility” → “Request access” → turn
+the switch on. Later `make install` updates do not ask again.
+
+You need to grant it again only if the certificate is deleted or recreated, the
+bundle id changes, or you switch machines (`tccutil reset Accessibility com.podnook.app`).
+
+## Data and permissions
+
+- Data directory: `~/Library/Application Support/com.podnook.app/`
+  - `history.db`: clipboard history
+  - `images/<hash>.png`: cached images
+- By default only the system Passwords app is ignored. Add other sources in
+  Settings with “Choose app…” (running apps) or by bundle id; metadata shows
+  copy count and text size.
+- **Accessibility**: used only for paste-back (it posts ⌘V). Without it the app
+  falls back to copying only, and Settings offers “Request access”.
+- No Dock icon: it lives in the menu bar. The default hotkey is **⌘⇧V**; the
+  menu-bar icon opens the panel too. If another app's global hotkey already owns
+  that combination, record a different one.
+- Shortcuts (aligned with Raycast): `↵` paste, `⌘↵` copy only, `⌘K` actions,
+  `⌘E` edit, `⇧⌘P` pin, `⌥⇧⌘S` save as file, `⌘P` cycle type filter, `⌃X`
+  delete, `⇧⌘X` delete recent…, `⌃⇧X` clear all, `⌘O` open link/file, `⇧⌘O`
+  reveal in Finder, `⌘,` settings, `Esc` close. `⌫` only edits the search field.
+- Saving writes to `~/Downloads` by default; the path is editable in the actions
+  panel. Text and links save as `.txt`, images as `.png`, file items copy the
+  original file.
+
+## Releasing
+
+Versions are built by GitHub Actions: a `v*` tag produces arm64 and x86_64 DMGs
+and a GitHub Release. Certificates, steps and Gatekeeper notes are in
+[`docs/RELEASING.md`](docs/RELEASING.md).
+
+## License
+
+See [`LICENSE`](LICENSE).
+
+---
+
+# 中文
+
+本地优先、开源的 macOS **剪贴板历史**工具。复制过的一切留在本机，一个快捷键召回、搜索、粘回，绝不上传。
+
+界面提供英文与简体中文：默认跟随系统语言，可在设置里切换。
+
+## 安装
+
+### 下载
+
+从 [GitHub Releases](https://github.com/wisarmy/podnook/releases) 下载对应架构的 DMG：
+
+- `Podnook-<version>-arm64.dmg`：Apple Silicon（M1/M2/M3/M4）
+- `Podnook-<version>-x86_64.dmg`：Intel Mac
+
+打开 DMG，把 Podnook 拖进 Applications。
+
+发布包用固定的自签名证书签名，后续更新不会重置辅助功能权限；但未经过 Apple
+公证，**首次打开会被 Gatekeeper 拦一次**：系统设置 → 隐私与安全性 → 仍要打开，
+或执行 `xattr -dr com.apple.quarantine /Applications/Podnook.app`。
+
+### 从源码安装
+
+```sh
+make signing   # 一次性：在本机钥匙串创建自签名证书 Podnook Local Signing
+make install   # 打包 → 用固定身份重签 → 校验 → 安装到 /Applications → 启动
+```
+
+首次使用只需授权一次：设置 → 「辅助功能」→「请求权限」→ 在系统设置里打开开关。
+
+## 数据与权限
+
+- 数据目录：`~/Library/Application Support/com.podnook.app/`（`history.db` 与 `images/`）。
+- 默认只忽略系统「密码」App；其它来源可在设置里点「选择 App…」添加，或手动填 bundle id。
+- 辅助功能权限仅用于「粘回」（模拟 ⌘V）；未授权时自动降级为「仅复制」。
+- 应用无 Dock 图标，常驻菜单栏；默认热键 **⌘⇧V**（可在设置里录制修改）。
+
+快捷键：`↵` 粘贴、`⌘↵` 仅复制、`⌘K` 操作面板、`⌘E` 编辑内容、`⇧⌘P` 固定、
+`⌥⇧⌘S` 保存为文件、`⌘P` 切换类型筛选、`⌃X` 删除、`⇧⌘X` 删除最近…、
+`⌃⇧X` 清空全部、`⌘O` 打开链接/文件、`⇧⌘O` 在 Finder 中显示、`⌘,` 设置、`Esc` 收起。
 
 ## 开发
 
@@ -54,77 +204,5 @@ nsh test         # headless 测试（含 Rust 单测）
 cargo test -p podnook-core   # 领域层与数据库单测，不依赖 NSH
 ```
 
-> ⚠️ NSH 的 debug 构建产物很大：首次完整构建 `target/` 约 15 GB（多套 feature 的依赖各编译一份）。
-> 磁盘紧张时先 `cargo clean`。日常迭代用增量构建，不会再涨这么多。
-
-`PODNOOK_DATA_DIR` 仅用于开发：让应用指向另一份数据目录（截图、手工验收），不设置时用 NSH 分配的标准目录。
-
-```sh
-./scripts/seed-screenshots.py        # 生成示例数据到 .nsh/screenshot-data
-PODNOOK_DATA_DIR=.nsh/screenshot-data nsh run
-make screenshot                      # 重新生成 docs/images/panel.png
-```
-
-## 安装
-
-### 下载安装
-
-从 [GitHub Releases](https://github.com/wisarmy/podnook/releases) 下载对应架构的 DMG：
-
-- `Podnook-<version>-arm64.dmg`：Apple Silicon（M1/M2/M3/M4）
-- `Podnook-<version>-x86_64.dmg`：Intel Mac
-
-打开 DMG，把 Podnook 拖进 Applications。
-
-发布包用固定的自签名证书签名，所以后续更新不会重置辅助功能权限；但它没有经过 Apple 公证，**首次打开会被 Gatekeeper 拦一次**：
-
-1. 双击 App，提示无法验证开发者；
-2. 打开 **系统设置 → 隐私与安全性**，在“安全性”里点 **仍要打开**；
-3. 或在终端执行：`xattr -dr com.apple.quarantine /Applications/Podnook.app`。
-
-首次使用仍需在设置里授权辅助功能（粘回需要）。
-
-### 从源码安装
-
-```sh
-make signing   # 一次性：在本机登录钥匙串创建自签名证书 Podnook Local Signing
-make install   # 打包 → 用固定身份重签 → 校验 → 安装到 /Applications → 启动
-```
-
-`nsh package` 只会产出 `.nsh/out/Podnook.app`，**不算安装**；`make install` 才会覆盖
-`/Applications/Podnook.app` 并重签名。
-
-为什么要固定签名：macOS 把辅助功能权限绑定到 App 的代码签名。ad-hoc 签名的指定要求是
-二进制的 cdhash，每次打包都会变，权限随之失效。固定证书签名的指定要求是
-`identifier "com.podnook.app" and certificate leaf = H"…"`，重建不会重置权限。
-
-本地开发用 `Podnook Local Signing`；GitHub 发布用另一张固定的自签名证书
-`Podnook Release Signing`，证书和密码只放在仓库 Secrets 里。发布流程见
-[`docs/RELEASING.md`](docs/RELEASING.md)。
-
-首次使用只需授权一次：设置 → 「辅助功能」→「请求权限」→ 在系统设置里打开开关。
-之后 `make install` 更新不会再要求重新授权。
-
-只有以下情况需要重新授权（`tccutil reset Accessibility com.podnook.app` 后重来一次）：
-证书被删除/重建、bundle id 改变、换一台机器。私钥只在本机钥匙串和 GitHub Secrets，不进入仓库。
-
-## 数据与权限
-
-- 数据目录：`~/Library/Application Support/com.podnook.app/`
-  - `history.db`：剪贴板历史
-  - `images/<hash>.png`：图片条目缓存
-- 默认只忽略系统「密码」App，其它来源 App 可在设置里点「选择 App…」从正在运行的应用中添加，或手动填 bundle id；元信息显示复制次数、字数。
-- **辅助功能（Accessibility）权限**：仅用于「粘回」（模拟 ⌘V）。未授权时自动降级为「仅复制」，
-  设置里可一键「请求权限」。
-- 应用无 Dock 图标，常驻菜单栏；默认呼出热键 **⌘⇧V**，点菜单栏图标也可打开。若该组合已被其他 App 的全局热键占用，换一个组合即可。
-- 快捷键（与 Raycast 对齐）：`↵` 粘贴、`⌘↵` 仅复制、`⌘K` 操作面板、`⌘E` 编辑内容、`⇧⌘P` 固定、`⌥⇧⌘S` 保存为文件、`⌘P` 切换类型筛选、`⌃X` 删除、`⇧⌘X` 删除最近…、`⌃⇧X` 清空全部、`⌘O` 打开链接/文件、`⇧⌘O` 在 Finder 中显示、`⌘,` 设置、`Esc` 收起。`⌫` 只编辑搜索框，不再删除条目。
-- 保存为文件默认写入 `~/Downloads`，路径可在操作面板里直接修改；文本/链接存 `.txt`，图片存 `.png`，文件条目复制原文件。
-
-## 发布
-
-版本通过 GitHub Actions 构建：打 `v*` tag 会生成 arm64 / x86_64 两个 DMG 并创建 Release。
-签名证书、发布步骤和 Gatekeeper 说明见 [`docs/RELEASING.md`](docs/RELEASING.md)。
-
-## 许可
-
-见 [`LICENSE`](LICENSE)。
+界面文案在 `locales/en.yml` 与 `locales/zh.yml`；`src/` 里不允许出现中文界面文本，
+`./scripts/check-strings.py` 会检查。

@@ -59,8 +59,22 @@ for ARCH in arm64 x86_64; do
     mkdir -p "$STAGE"
     cp -R "$APP" "$STAGE/"
     ln -s /Applications "$STAGE/Applications"
-    cat > "$STAGE/安装说明.txt" <<TXT
+    cat > "$STAGE/Install.txt" <<TXT
 Podnook ${VERSION} (${ARCH})
+
+1. Drag Podnook into Applications.
+2. The first launch is stopped by Gatekeeper once:
+   System Settings → Privacy & Security → Open Anyway;
+   or in Terminal: xattr -dr com.apple.quarantine /Applications/Podnook.app
+3. Open Podnook and grant Accessibility in Settings (needed to paste back).
+
+The release is signed with a fixed self-signed certificate, so updates keep the
+Accessibility permission. It is not notarized by Apple, which is why the first
+launch needs the confirmation above.
+
+---
+
+安装说明
 
 1. 把 Podnook 拖进 Applications。
 2. 首次打开会被 Gatekeeper 拦一次：

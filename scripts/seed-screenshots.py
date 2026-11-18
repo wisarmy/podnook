@@ -124,8 +124,8 @@ def main() -> None:
     # Pinned: the pod icon and the repository link.
     add(
         "image",
-        "Podnook 图标",
-        "图片 1024×1024",
+        None,
+        "",
         "Keynote",
         "com.apple.iWork.Keynote",
         120,
@@ -147,17 +147,17 @@ def main() -> None:
     # Today.
     add(
         "text",
-        "把每件你在乎的事，都收进一只豆荚。",
-        "把每件你在乎的事，都收进一只豆荚。",
-        "备忘录",
+        "A pod for everything you keep.",
+        "A pod for everything you keep.",
+        "Notes",
         "com.apple.Notes",
         540,
         copy_count=6,
     )
     add(
         "text",
-        'fn main() {\n    let history = Store::open(data_dir)?;\n    println!("local-first");\n}',
-        "fn main() { ...",
+        'fn main() {\n    let store = Store::open(data_dir)?;\n    println!("local-first");\n}',
+        'fn main() { let store = Store::open(data_dir)?; println!("local-first"); }',
         "Xcode",
         "com.apple.dt.Xcode",
         900,
@@ -166,7 +166,7 @@ def main() -> None:
     add(
         "file",
         None,
-        "podnook-spec.pdf",
+        "",
         "Finder",
         "com.apple.finder",
         1500,
@@ -184,8 +184,8 @@ def main() -> None:
     )
     add(
         "text",
-        "本地优先：剪贴板数据只写进本机 SQLite，不上传、不联网。",
-        "本地优先：剪贴板数据只写进本机 SQLite，不上传、不联网。",
+        "Local-first: clipboard history is written to one SQLite file on this Mac. No upload, no network.",
+        "Local-first: clipboard history is written to one SQLite file on this Mac. No upload, no network.",
         "Freeform",
         "com.apple.freeform",
         3600,
@@ -193,9 +193,9 @@ def main() -> None:
     )
     add(
         "text",
-        "⌘⇧V 呼出 · ↵ 粘贴 · ⌘K 操作面板",
-        "⌘⇧V 呼出 · ↵ 粘贴 · ⌘K 操作面板",
-        "备忘录",
+        "⌘⇧V to summon · ↵ to paste · ⌘K for actions",
+        "⌘⇧V to summon · ↵ to paste · ⌘K for actions",
+        "Notes",
         "com.apple.Notes",
         7200,
         copy_count=3,
@@ -208,6 +208,7 @@ def main() -> None:
             ("retention.count", "1000"),
             ("retention.days", "30"),
             ("ignored.bundles", '["com.apple.Passwords"]'),
+            ("locale", "en"),
         ],
     )
     conn.commit()
