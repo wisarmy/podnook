@@ -1,6 +1,6 @@
 export PATH := $(HOME)/.local/bin:$(PATH)
 
-.PHONY: install signing release-signing screenshot check test run
+.PHONY: install signing release-signing screenshot check test strings run
 
 install:
 	./scripts/install.sh
@@ -17,7 +17,10 @@ screenshot:
 check:
 	nsh check
 
-test:
+strings:
+	./scripts/check-strings.py
+
+test: strings
 	cargo test -p podnook-core
 	nsh test
 

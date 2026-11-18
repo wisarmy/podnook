@@ -12,9 +12,9 @@ use std::sync::Mutex;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::{
-    hash_bytes, hash_text, kind_for_text, preview_for_files, preview_for_image, preview_for_text,
-    truncate_text, Clip, ClipKind, NewClip, Snapshot, IMAGE_LIMIT, RETENTION_COUNT, RETENTION_DAYS,
-    SETTING_IGNORED_BUNDLES, SETTING_RETENTION_COUNT, SETTING_RETENTION_DAYS, TEXT_LIMIT,
+    hash_bytes, hash_text, kind_for_text, preview_for_text, truncate_text, Clip, ClipKind, NewClip,
+    Snapshot, IMAGE_LIMIT, RETENTION_COUNT, RETENTION_DAYS, SETTING_IGNORED_BUNDLES,
+    SETTING_RETENTION_COUNT, SETTING_RETENTION_DAYS, TEXT_LIMIT,
 };
 
 const SCHEMA: &str = r#"
@@ -69,7 +69,8 @@ pub struct Store {
     self_write: Mutex<Option<String>>,
 }
 
-/// 旧库升级：补上 copy_count 列，并把已有条目计为复制过一次。
+/// 旧库升级：补上 `copy_count` 列并把已有条目计为复制过一次；清掉
+/// 早期版本写进 `preview` 的界面文案（图片/文件条目的预览改为按类型渲染）。
 fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     let mut stmt = conn.prepare("PRAGMA table_info(clips)")?;
     let columns: Vec<String> = stmt
@@ -83,6 +84,10 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
         )?;
         conn.execute("UPDATE clips SET copy_count = 1", [])?;
     }
+    conn.execute(
+        "UPDATE clips SET preview = '' WHERE kind IN ('image', 'file') AND preview <> ''",
+        [],
+    )?;
     Ok(())
 }
 
@@ -181,8 +186,8 @@ impl Store {
                 let preview = preview_for_text(&stored);
                 (Some(stored), preview, truncated)
             }
-            ClipKind::Image => (None, preview_for_image(snapshot.image_size), false),
-            ClipKind::File => (None, preview_for_files(&snapshot.file_uris), false),
+            ClipKind::Image => (None, String::new(), false),
+            ClipKind::File => (None, String::new(), false),
         };
 
         let mut image_path = None;
@@ -340,11 +345,10 @@ impl Store {
 
     /// 修正图片条目的尺寸（迁移旧的像素尺寸到逻辑点数）。
     pub fn set_image_dimensions(&self, id: i64, width: u32, height: u32) -> rusqlite::Result<()> {
-        let preview = preview_for_image(Some((width, height)));
         let conn = self.lock();
         conn.execute(
-            "UPDATE clips SET image_w = ?1, image_h = ?2, preview = ?3 WHERE id = ?4",
-            params![width as i64, height as i64, preview, id],
+            "UPDATE clips SET image_w = ?1, image_h = ?2 WHERE id = ?3",
+            params![width as i64, height as i64, id],
         )?;
         Ok(())
     }
@@ -622,13 +626,20 @@ mod tests {
                  );
                  INSERT INTO clips
                    (kind, content, preview, hash, byte_size, truncated, created_at, last_copied_at, pinned)
-                 VALUES ('text', 'hi', 'hi', 'hash', 2, 0, 1, 1, 0);",
+                 VALUES ('text', 'hi', 'hi', 'hash', 2, 0, 1, 1, 0);
+                 INSERT INTO clips
+                   (kind, content, preview, hash, image_w, image_h, byte_size, truncated, created_at, last_copied_at, pinned)
+                 VALUES ('image', NULL, '图片 1×1', 'hash2', 1, 1, 3, 0, 1, 2, 0);",
             )
             .unwrap();
         }
         let store = Store::open(&dir).unwrap();
-        let row = store.list(1).unwrap().remove(0);
-        assert_eq!(row.copy_count, 1);
+        let rows = store.list(10).unwrap();
+        let text = rows.iter().find(|row| row.kind == ClipKind::Text).unwrap();
+        assert_eq!(text.copy_count, 1);
+        let image = rows.iter().find(|row| row.kind == ClipKind::Image).unwrap();
+        assert_eq!(image.preview, "");
+        assert_eq!(image.image_w, Some(1));
     }
 
     #[test]
@@ -647,13 +658,14 @@ mod tests {
             .unwrap();
         let rows = store.list(10).unwrap();
         assert_eq!(rows[0].kind, ClipKind::File);
-        assert_eq!(rows[0].preview, "a.txt 等 2 个文件");
+        assert_eq!(rows[0].preview, "");
+        assert_eq!(rows[0].file_uris, ["/tmp/a.txt", "/tmp/b.txt"]);
         assert_eq!(rows[0].byte_size, 42);
         assert_eq!(rows[1].kind, ClipKind::Link);
     }
 
     #[test]
-    fn corrects_image_dimensions_and_preview() {
+    fn corrects_image_dimensions() {
         let store = store();
         store
             .capture(
@@ -667,14 +679,13 @@ mod tests {
             .unwrap();
 
         let row = store.list(1).unwrap().remove(0);
-        assert_eq!(row.preview, "图片 998×762");
+        assert_eq!(row.preview, "");
         assert_eq!(row.image_w, Some(998));
 
         store.set_image_dimensions(row.id, 499, 381).unwrap();
         let row = store.list(1).unwrap().remove(0);
         assert_eq!(row.image_w, Some(499));
         assert_eq!(row.image_h, Some(381));
-        assert_eq!(row.preview, "图片 499×381");
     }
 
     #[test]

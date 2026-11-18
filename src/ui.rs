@@ -19,6 +19,7 @@ use nsh_core::keymap::When;
 use nsh_core::prelude::*;
 use nsh_core::{
     MacOsBackdrop, MacOsBackdropBlending, PressEvent,
+    platform::HourCycle,
 };
 use podnook_core::db::Store;
 use podnook_core::{hash_text, now_secs, Clip, ClipKind, SETTING_AUTO_PASTE};
@@ -76,7 +77,7 @@ struct State {
 
 #[derive(Clone, PartialEq)]
 enum Row {
-    Section(&'static str),
+    Section(String),
     Clip(Clip),
 }
 
@@ -114,13 +115,16 @@ struct ActionItem {
     destructive: bool,
 }
 
-const DELETE_RANGES: &[(i64, &str)] = &[
-    (5 * 60, "最近 5 分钟"),
-    (15 * 60, "最近 15 分钟"),
-    (30 * 60, "最近 30 分钟"),
-    (60 * 60, "最近 1 小时"),
-    (24 * 60 * 60, "最近 24 小时"),
-];
+/// 删除最近…里可选的时间范围。
+fn delete_ranges() -> Vec<(i64, String)> {
+    vec![
+        (5 * 60, t!("range.m5")),
+        (15 * 60, t!("range.m15")),
+        (30 * 60, t!("range.m30")),
+        (60 * 60, t!("range.h1")),
+        (24 * 60 * 60, t!("range.h24")),
+    ]
+}
 
 /// 整个应用的骨架。
 pub fn shell() -> impl IntoElement {
@@ -197,7 +201,13 @@ pub fn shell() -> impl IntoElement {
     });
 
     bind_keys(&state, store);
-    shell_view(state)
+    dynamic(move || shell_view(state.clone()))
+}
+
+/// 窗口重建前丢掉旧的界面状态，避免呼出时操作到已销毁的信号。
+pub fn forget_state() {
+    STATE.with(|slot| *slot.borrow_mut() = None);
+    SEARCH.with(|slot| *slot.borrow_mut() = None);
 }
 
 pub fn glass_backdrop() -> MacOsBackdrop {
@@ -239,7 +249,7 @@ pub fn open_editor(clip: Clip) {
     let window = panel_window()
         .id("editor")
         .kind(WindowKind::Panel)
-        .title("编辑内容")
+        .title(t!("editor.title"))
         .default_size(size(px(640.0), px(460.0)))
         .attributes(attributes)
         .content(move || edit_content(clip.clone()));
@@ -257,6 +267,17 @@ fn close_editor() {
             if window.state().is_some() {
                 window.close();
             }
+        }
+    });
+}
+
+/// 语言切换后更新编辑窗口的标题。
+pub fn refresh_editor_title() {
+    EDITOR.with(|slot| {
+        if let Some(window) = slot.borrow().as_ref() {
+            let mut attributes = WindowAttributes::default();
+            attributes.title = Some(t!("editor.title"));
+            window.set(attributes);
         }
     });
 }
@@ -282,7 +303,7 @@ fn edit_content(clip: Clip) -> impl IntoElement {
             }
             Err(e) => {
                 log::error!("update clip: {e}");
-                save_notice.set(Some("保存失败：内容为空，或与已有条目重复".into()));
+                save_notice.set(Some(t!("editor.duplicate")));
             }
         }
     };
@@ -302,7 +323,7 @@ fn edit_content(clip: Clip) -> impl IntoElement {
         .p_4()
         .gap_3()
         .child(
-            text("编辑内容")
+            text(t!("editor.title"))
                 .text_size(px(13.0))
                 .text_color(theme::muted_fg()),
         )
@@ -338,7 +359,7 @@ fn edit_content(clip: Clip) -> impl IntoElement {
                     .text_size(px(11.0))
                     .text_color(theme::danger())
             } else {
-                text("保存后更新这条历史记录")
+                text(t!("editor.hint"))
                     .text_size(px(11.0))
                     .text_color(theme::muted_fg())
             }
@@ -348,13 +369,13 @@ fn edit_content(clip: Clip) -> impl IntoElement {
                 .flex_row()
                 .justify_end()
                 .gap_2()
-                .child(editor_button("取消", false, cancel))
-                .child(editor_button("保存", true, save)),
+                .child(editor_button(t!("editor.cancel"), false, cancel))
+                .child(editor_button(t!("editor.save"), true, save)),
         )
 }
 
 fn editor_button(
-    label: &'static str,
+    label: String,
     primary: bool,
     on_press: impl Fn() + 'static,
 ) -> impl IntoElement {
@@ -404,6 +425,17 @@ enum SaveData {
     Copy(PathBuf),
 }
 
+/// 语言无关的保存文件名时间戳。
+fn stamp(secs: i64) -> String {
+    Timestamp::from_second(secs)
+        .map(|ts| {
+            ts.to_zoned(TimeZone::system())
+                .strftime("%Y%m%d-%H%M%S")
+                .to_string()
+        })
+        .unwrap_or_else(|_| "clip".to_string())
+}
+
 fn default_save_path(name: &str) -> String {
     match std::env::var("HOME") {
         Ok(home) => format!("{home}/Downloads/{name}"),
@@ -438,7 +470,7 @@ fn open_selected(state: &State) {
                 let _ = nsh_core::element::open_path(path);
             }
         }
-        _ => flash(state, "这个条目不能打开"),
+        _ => flash(state, t!("flash.cannot_open")),
     }
 }
 
@@ -451,7 +483,7 @@ fn reveal_selected(state: &State) {
             let _ = nsh_core::element::reveal_path(path);
         }
     } else {
-        flash(state, "只有文件条目可以在 Finder 中显示");
+        flash(state, t!("flash.reveal_files_only"));
     }
 }
 
@@ -468,7 +500,7 @@ fn save_target(clip: &Clip) -> Option<(String, SaveData)> {
             let path = clip.image_path.as_deref()?;
             let bytes = std::fs::read(path).ok()?;
             Some((
-                format!("{}.png", safe_name(&clip.preview)),
+                format!("podnook-{}.png", stamp(clip.created_at)),
                 SaveData::Bytes(bytes),
             ))
         }
@@ -490,13 +522,13 @@ fn save_now(state: &State) {
         return;
     };
     let Some((_, data)) = save_target(&clip) else {
-        flash(state, "这个条目无法保存为文件");
+        flash(state, t!("flash.cannot_save"));
         return;
     };
     let raw = state.save_path.get();
     let path = expand_tilde(raw.trim());
     if path.as_os_str().is_empty() {
-        flash(state, "保存路径不能为空");
+        flash(state, t!("flash.empty_path"));
         return;
     }
     let result = match data {
@@ -506,28 +538,33 @@ fn save_now(state: &State) {
     match result {
         Ok(()) => {
             close_actions(state);
-            flash(state, format!("已保存到 {}", path.display()));
+            flash(state, t!("flash.saved_to", path = path.display()));
         }
         Err(e) => {
             log::error!("save clip to {}: {e}", path.display());
-            flash(state, "保存失败，检查路径后重试");
+            flash(state, t!("flash.save_failed"));
         }
     }
 }
 
 fn actions_overlay(state: State) -> impl IntoElement {
-    dynamic(move || actions_overlay_inner(state.clone()))
+    dynamic(move || {
+        if state.actions_open.get() {
+            actions_overlay_inner(state.clone()).into_element()
+        } else {
+            view().into_element()
+        }
+    })
 }
 
 fn actions_overlay_inner(state: State) -> View {
-    let open = state.actions_open;
     let selected = state.actions_selected.get();
     let items = action_items(&state);
 
     let mut list = view().flex_col().p_2().overflow_hidden();
     if items.is_empty() {
         list = list.child(
-            text("没有匹配的操作")
+            text(t!("panel.no_actions"))
                 .p_3()
                 .text_size(px(12.0))
                 .text_color(theme::muted_fg()),
@@ -547,7 +584,7 @@ fn actions_overlay_inner(state: State) -> View {
             .p_3()
             .gap_2()
             .child(
-                text("保存到")
+                text(t!("panel.save_to"))
                     .text_size(px(11.0))
                     .text_color(theme::muted_fg()),
             )
@@ -566,7 +603,7 @@ fn actions_overlay_inner(state: State) -> View {
                     .auto_focus(true),
             )
             .child(
-                text("Enter 保存 · Esc 取消")
+                text(t!("panel.save_keys"))
                     .text_size(px(11.0))
                     .text_color(theme::muted_fg()),
             )
@@ -584,17 +621,6 @@ fn actions_overlay_inner(state: State) -> View {
         .absolute()
         .inset(px(0.0))
         .z_index(40)
-        .opacity(move || if open.get() { 1.0_f32 } else { 0.0_f32 })
-        .pointer_events(move || {
-            if open.get() {
-                PointerEvents::BoxNone
-            } else {
-                PointerEvents::None
-            }
-        })
-        .transition_opacity()
-        .duration(150.0_f32)
-        .ease_out()
         .child(
             view()
                 .absolute()
@@ -620,10 +646,6 @@ fn actions_overlay_inner(state: State) -> View {
                 .border_color(theme::border())
                 .shadow_md()
                 .overflow_hidden()
-                .translate_y(move || if open.get() { px(0.0) } else { px(8.0) })
-                .transition_transform()
-                .duration(170.0_f32)
-                .ease_out()
                 .child(body)
                 .child(if save_mode {
                     view()
@@ -646,7 +668,7 @@ fn actions_overlay_inner(state: State) -> View {
                                         close_actions(&escape_state);
                                     }
                                 })
-                                .placeholder("搜索操作…")
+                                .placeholder(t!("panel.search_actions"))
                                 .text_size(px(12.0)),
                         )
                 }),
@@ -744,13 +766,13 @@ fn build_rows(clips: &[Clip], query: &str, filter: Option<ClipKind>) -> Vec<Row>
     }
 
     let mut rows = Vec::new();
-    push_group(&mut rows, "已固定", pinned);
-    push_group(&mut rows, "今天", today_rows);
-    push_group(&mut rows, "更早", older);
+    push_group(&mut rows, t!("group.pinned"), pinned);
+    push_group(&mut rows, t!("group.today"), today_rows);
+    push_group(&mut rows, t!("group.earlier"), older);
     rows
 }
 
-fn push_group(rows: &mut Vec<Row>, label: &'static str, group: Vec<Clip>) {
+fn push_group(rows: &mut Vec<Row>, label: String, group: Vec<Clip>) {
     if group.is_empty() {
         return;
     }
@@ -768,7 +790,7 @@ fn matches_query(clip: &Clip, q: &str) -> bool {
     if let Some(app) = &clip.source_app {
         hay.push_str(app);
     }
-    hay.push_str(clip.kind.label());
+    hay.push_str(&kind_label(clip.kind));
     hay.to_lowercase().contains(q)
 }
 
@@ -787,10 +809,19 @@ fn format_time(secs: i64) -> String {
         return String::new();
     };
     let zoned = ts.to_zoned(TimeZone::system());
-    if zoned.date() == local_today() {
+    let h24 = uses_24_hour_clock();
+    let time = if h24 {
         zoned.strftime("%H:%M").to_string()
     } else {
-        zoned.strftime("%m-%d %H:%M").to_string()
+        zoned.strftime("%I:%M %p").to_string()
+    };
+    if zoned.date() == local_today() {
+        return time;
+    }
+    if h24 {
+        format!("{} {time}", zoned.strftime("%m-%d"))
+    } else {
+        format!("{} {time}", zoned.strftime("%b %d"))
     }
 }
 
@@ -826,6 +857,57 @@ fn human_size(bytes: i64) -> String {
     } else {
         format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
     }
+}
+
+fn kind_label(kind: ClipKind) -> String {
+    match kind {
+        ClipKind::Text => t!("kind.text"),
+        ClipKind::Link => t!("kind.link"),
+        ClipKind::Image => t!("kind.image"),
+        ClipKind::File => t!("kind.file"),
+    }
+}
+
+fn file_name(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.to_string())
+}
+
+/// 列表里的单行标题：文本用入库时的预览，图片/文件按当前语言现算。
+fn clip_title(clip: &Clip) -> String {
+    match clip.kind {
+        ClipKind::Image => match (clip.image_w, clip.image_h) {
+            (Some(w), Some(h)) => t!("preview.image_size", w = w, h = h),
+            _ => t!("preview.image"),
+        },
+        ClipKind::File => match clip.file_uris.as_slice() {
+            [] => t!("preview.file"),
+            [one] => file_name(one),
+            [first, rest @ ..] => {
+                let others = rest.len();
+                if others == 1 {
+                    t!("preview.files_more_one", first = file_name(first))
+                } else {
+                    t!(
+                        "preview.files_more",
+                        first = file_name(first),
+                        total = others + 1,
+                        others = others
+                    )
+                }
+            }
+        },
+        ClipKind::Text | ClipKind::Link => clip.preview.clone(),
+    }
+}
+
+fn uses_24_hour_clock() -> bool {
+    matches!(
+        nsh_core::element::locale_settings().hour_cycle,
+        HourCycle::H23 | HourCycle::H24
+    )
 }
 
 // ---------------------------------------------------------------- 交互
@@ -994,8 +1076,8 @@ fn move_action(state: &State, delta: isize) {
 
 fn action_items(state: &State) -> Vec<ActionItem> {
     let pin_label = match selected_clip(state) {
-        Some(clip) if clip.pinned => "取消固定",
-        _ => "固定",
+        Some(clip) if clip.pinned => t!("action.unpin"),
+        _ => t!("action.pin"),
     };
 
     let editable = matches!(
@@ -1004,11 +1086,11 @@ fn action_items(state: &State) -> Vec<ActionItem> {
     );
 
     let mut items = match state.actions_mode.get() {
-        ActionMode::Range => DELETE_RANGES
-            .iter()
+        ActionMode::Range => delete_ranges()
+            .into_iter()
             .map(|(seconds, label)| ActionItem {
-                kind: ActionKind::DeleteRange(*seconds),
-                label: (*label).to_string(),
+                kind: ActionKind::DeleteRange(seconds),
+                label,
                 shortcut: "",
                 destructive: true,
             })
@@ -1016,13 +1098,13 @@ fn action_items(state: &State) -> Vec<ActionItem> {
         ActionMode::ConfirmAll => vec![
             ActionItem {
                 kind: ActionKind::ConfirmDeleteAll,
-                label: "确认清空全部历史（含固定）".into(),
+                label: t!("action.clear_all_confirm"),
                 shortcut: "enter",
                 destructive: true,
             },
             ActionItem {
                 kind: ActionKind::Back,
-                label: "取消".into(),
+                label: t!("editor.cancel"),
                 shortcut: "escape",
                 destructive: false,
             },
@@ -1030,13 +1112,13 @@ fn action_items(state: &State) -> Vec<ActionItem> {
         ActionMode::SaveFile => vec![
             ActionItem {
                 kind: ActionKind::SaveNow,
-                label: "保存".into(),
+                label: t!("editor.save"),
                 shortcut: "enter",
                 destructive: false,
             },
             ActionItem {
                 kind: ActionKind::Back,
-                label: "取消".into(),
+                label: t!("editor.cancel"),
                 shortcut: "escape",
                 destructive: false,
             },
@@ -1044,19 +1126,19 @@ fn action_items(state: &State) -> Vec<ActionItem> {
         ActionMode::Main => vec![
             ActionItem {
                 kind: ActionKind::Paste,
-                label: "粘贴".into(),
+                label: t!("action.paste"),
                 shortcut: "enter",
                 destructive: false,
             },
             ActionItem {
                 kind: ActionKind::Copy,
-                label: "仅复制".into(),
+                label: t!("action.copy"),
                 shortcut: "mod+enter",
                 destructive: false,
             },
             ActionItem {
                 kind: ActionKind::Edit,
-                label: "编辑内容".into(),
+                label: t!("action.edit"),
                 shortcut: "mod+e",
                 destructive: false,
             },
@@ -1068,25 +1150,25 @@ fn action_items(state: &State) -> Vec<ActionItem> {
             },
             ActionItem {
                 kind: ActionKind::SaveFile,
-                label: "保存为文件…".into(),
+                label: t!("action.save_file"),
                 shortcut: "alt+shift+mod+s",
                 destructive: false,
             },
             ActionItem {
                 kind: ActionKind::Delete,
-                label: "删除".into(),
+                label: t!("action.delete"),
                 shortcut: "ctrl+x",
                 destructive: true,
             },
             ActionItem {
                 kind: ActionKind::DeleteEntries,
-                label: "删除最近…".into(),
+                label: t!("action.delete_recent"),
                 shortcut: "shift+mod+x",
                 destructive: true,
             },
             ActionItem {
                 kind: ActionKind::DeleteAll,
-                label: "清空全部…".into(),
+                label: t!("action.clear_all"),
                 shortcut: "ctrl+shift+x",
                 destructive: true,
             },
@@ -1096,7 +1178,7 @@ fn action_items(state: &State) -> Vec<ActionItem> {
     if state.actions_mode.get() == ActionMode::Range {
         items.push(ActionItem {
             kind: ActionKind::Back,
-            label: "返回".into(),
+            label: t!("action.back"),
             shortcut: "escape",
             destructive: false,
         });
@@ -1114,9 +1196,9 @@ fn action_items(state: &State) -> Vec<ActionItem> {
                 ActionItem {
                     kind: ActionKind::Open,
                     label: if kind == Some(ClipKind::Link) {
-                        "打开链接".into()
+                        t!("action.open_link")
                     } else {
-                        "打开文件".into()
+                        t!("action.open_file")
                     },
                     shortcut: "mod+o",
                     destructive: false,
@@ -1128,7 +1210,7 @@ fn action_items(state: &State) -> Vec<ActionItem> {
                 3,
                 ActionItem {
                     kind: ActionKind::Reveal,
-                    label: "在 Finder 中显示".into(),
+                    label: t!("action.reveal"),
                     shortcut: "mod+shift+o",
                     destructive: false,
                 },
@@ -1143,14 +1225,14 @@ fn action_items(state: &State) -> Vec<ActionItem> {
     items
 }
 
-fn range_label(seconds: i64) -> &'static str {
+fn range_label(seconds: i64) -> String {
     match seconds {
-        300 => "5 分钟",
-        900 => "15 分钟",
-        1800 => "30 分钟",
-        3600 => "1 小时",
-        86400 => "24 小时",
-        _ => "时间范围",
+        300 => t!("range.m5"),
+        900 => t!("range.m15"),
+        1800 => t!("range.m30"),
+        3600 => t!("range.h1"),
+        86400 => t!("range.h24"),
+        _ => t!("range.any"),
     }
 }
 
@@ -1217,7 +1299,11 @@ fn run_action(state: &State, store: Option<&Store>, kind: ActionKind) {
                     close_actions(state);
                     flash(
                         state,
-                        format!("已删除最近 {} 的 {count} 条（固定项保留）", range_label(seconds)),
+                        t!(
+                            "flash.deleted_recent",
+                            range = range_label(seconds),
+                            count = count
+                        ),
                     );
                 }
                 Err(e) => log::error!("delete since: {e}"),
@@ -1232,7 +1318,7 @@ fn run_action(state: &State, store: Option<&Store>, kind: ActionKind) {
                     crate::history::bump();
                     reload(state, store);
                     close_actions(state);
-                    flash(state, format!("已清空 {count} 条历史"));
+                    flash(state, t!("flash.cleared", count = count));
                 }
                 Err(e) => log::error!("clear history: {e}"),
             }
@@ -1334,14 +1420,14 @@ fn activate_selected(state: &State, store: Option<&Store>, paste: bool) {
                 crate::paste::paste_after_hide();
             } else {
                 crate::paste::prompt_trust_once();
-                flash(state, "已复制 · 开启辅助功能后可自动粘贴");
+                flash(state, t!("flash.copied_no_paste"));
             }
             return;
         }
     }
 
     crate::hide_panel();
-    flash(state, "已复制");
+    flash(state, t!("flash.copied"));
 }
 
 fn toggle_pin(state: &State, store: Option<&Store>) {
@@ -1355,7 +1441,14 @@ fn toggle_pin(state: &State, store: Option<&Store>) {
     }
     crate::history::bump();
     reload(state, store);
-    flash(state, if clip.pinned { "已取消固定" } else { "已固定" });
+    flash(
+        state,
+        if clip.pinned {
+            t!("flash.unpinned")
+        } else {
+            t!("flash.pinned")
+        },
+    );
 }
 
 fn delete_selected(state: &State, store: Option<&Store>) {
@@ -1369,7 +1462,7 @@ fn delete_selected(state: &State, store: Option<&Store>) {
     }
     crate::history::bump();
     reload(state, store);
-    flash(state, "已删除");
+    flash(state, t!("flash.deleted"));
 }
 
 fn flash(state: &State, message: impl Into<String>) {
@@ -1381,6 +1474,10 @@ fn flash(state: &State, message: impl Into<String>) {
 // ---------------------------------------------------------------- 顶栏
 
 fn header(state: State) -> impl IntoElement {
+    dynamic(move || header_inner(state.clone()))
+}
+
+fn header_inner(state: State) -> impl IntoElement {
     view()
         .window_drag(true)
         .flex_row()
@@ -1419,7 +1516,7 @@ fn search_box(state: State) -> impl IntoElement {
                 .element_ref(&search)
                 .value(query)
                 .on_change(move |value: &str| query.set(value.to_string()))
-                .placeholder("搜索剪贴板历史…")
+                .placeholder(t!("panel.search"))
                 .placeholder_color(rgb(0x8A8178))
                 .text_color(theme::fg())
                 .text_size(px(14.0))
@@ -1446,14 +1543,14 @@ fn filter_bar(state: State) -> impl IntoElement {
         .flex_row()
         .items_center()
         .gap_2()
-        .child(filter_pill(state.clone(), None, "全部"))
-        .child(filter_pill(state.clone(), Some(ClipKind::Text), "文本"))
-        .child(filter_pill(state.clone(), Some(ClipKind::Link), "链接"))
-        .child(filter_pill(state.clone(), Some(ClipKind::Image), "图片"))
-        .child(filter_pill(state, Some(ClipKind::File), "文件"))
+        .child(filter_pill(state.clone(), None, t!("filter.all")))
+        .child(filter_pill(state.clone(), Some(ClipKind::Text), t!("kind.text")))
+        .child(filter_pill(state.clone(), Some(ClipKind::Link), t!("kind.link")))
+        .child(filter_pill(state.clone(), Some(ClipKind::Image), t!("kind.image")))
+        .child(filter_pill(state, Some(ClipKind::File), t!("kind.file")))
 }
 
-fn filter_pill(state: State, kind: Option<ClipKind>, label: &'static str) -> impl IntoElement {
+fn filter_pill(state: State, kind: Option<ClipKind>, label: String) -> impl IntoElement {
     let filter = state.filter;
     view()
         .on_press(move || filter.set(kind))
@@ -1482,7 +1579,7 @@ fn filter_pill(state: State, kind: Option<ClipKind>, label: &'static str) -> imp
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum RowKey {
-    Section(&'static str),
+    Section(String),
     Clip(i64),
 }
 
@@ -1500,7 +1597,7 @@ fn sidebar(state: State) -> impl IntoElement {
                 view().flex_col().py_2().child(each(
                     move || rows.get(),
                     |row| match row {
-                        Row::Section(label) => RowKey::Section(label),
+                        Row::Section(label) => RowKey::Section(label.clone()),
                         Row::Clip(clip) => RowKey::Clip(clip.id),
                     },
                     move |row, _index| match row.get() {
@@ -1539,8 +1636,11 @@ fn sidebar(state: State) -> impl IntoElement {
                                 .child(icon_box(&clip))
                                 .child(
                                     view().flex_1().child(
-                                        text(clip.preview.clone())
-                                            .truncate()
+                                        text({
+                                            let clip = clip.clone();
+                                            move || clip_title(&clip)
+                                        })
+                                        .truncate()
                                             .text_size(px(14.0))
                                             .text_color(move || {
                                                 if selected.get() == Some(id) {
@@ -1607,7 +1707,7 @@ fn preview_content(state: State) -> impl IntoElement {
             .items_center()
             .justify_center()
             .child(
-                text("复制点什么，就会出现在这里")
+                text(t!("panel.empty"))
                     .text_size(px(13.0))
                     .text_color(theme::muted_fg()),
             );
@@ -1638,9 +1738,11 @@ fn preview_body(clip: Clip) -> impl IntoElement {
                         )
                         .when(truncated, |v| {
                             v.child(
-                                text(format!(
-                                    "内容过长，仅保存了前 {}。",
-                                    human_size(clip.content.as_ref().map_or(0, |c| c.len() as i64))
+                                text(t!(
+                                    "panel.truncated_note",
+                                    size = human_size(
+                                        clip.content.as_ref().map_or(0, |c| c.len() as i64)
+                                    )
                                 ))
                                 .text_size(px(12.0))
                                 .text_color(theme::muted_fg()),
@@ -1672,9 +1774,9 @@ fn preview_body(clip: Clip) -> impl IntoElement {
                     .gap_2()
                     .child(
                         text(if clip.file_uris.len() > 1 {
-                            format!("{} 个文件", clip.file_uris.len())
+                            t!("preview.file_many", count = clip.file_uris.len())
                         } else {
-                            "1 个文件".to_string()
+                            t!("preview.file_one")
                         })
                         .text_size(px(13.0))
                         .text_color(theme::muted_fg()),
@@ -1691,7 +1793,10 @@ fn preview_body(clip: Clip) -> impl IntoElement {
 }
 
 fn information(clip: Clip) -> impl IntoElement {
-    let source = clip.source_app.clone().unwrap_or_else(|| "未知".to_string());
+    let source = clip
+        .source_app
+        .clone()
+        .unwrap_or_else(|| t!("meta.unknown"));
     let mut info = view()
         .flex_col()
         .gap_3()
@@ -1700,38 +1805,47 @@ fn information(clip: Clip) -> impl IntoElement {
         .border_t(px(1.0))
         .border_t_color(theme::border())
         .child(
-            text("信息")
+            text(t!("meta.info"))
                 .text_size(px(11.0))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(theme::muted_fg()),
         )
-        .child(info_row("来源", source))
-        .child(info_row("类型", clip.kind.label().to_string()))
-        .child(info_row("复制次数", clip.copy_count.to_string()));
+        .child(info_row(t!("meta.source"), source))
+        .child(info_row(t!("meta.kind"), kind_label(clip.kind)))
+        .child(info_row(t!("meta.copies"), clip.copy_count.to_string()));
 
     if clip.kind == ClipKind::Image {
         if let (Some(w), Some(h)) = (clip.image_w, clip.image_h) {
-            info = info.child(info_row("尺寸", format!("{w} × {h}")));
+            info = info.child(info_row(t!("meta.dimensions"), format!("{w} × {h}")));
         }
     }
     if clip.kind == ClipKind::File {
-        info = info.child(info_row("文件数", clip.file_uris.len().to_string()));
+        info = info.child(info_row(
+            t!("meta.files"),
+            clip.file_uris.len().to_string(),
+        ));
     }
     if matches!(clip.kind, ClipKind::Text | ClipKind::Link) {
         if let Some(content) = &clip.content {
             info = info
-                .child(info_row("字符数", content.chars().count().to_string()))
-                .child(info_row("字数", word_count(content).to_string()));
+                .child(info_row(
+                    t!("meta.characters"),
+                    content.chars().count().to_string(),
+                ))
+                .child(info_row(t!("meta.words"), word_count(content).to_string()));
         }
     }
     if !clip.file_uris.is_empty() {
-        info = info.child(info_row("路径", clip.file_uris.join("\n")));
+        info = info.child(info_row(t!("meta.path"), clip.file_uris.join("\n")));
     }
-    info.child(info_row("大小", human_size(clip.byte_size)))
-        .child(info_row("复制于", format_time(clip.last_copied_at)))
+    info.child(info_row(t!("meta.size"), human_size(clip.byte_size)))
+        .child(info_row(
+            t!("meta.copied_at"),
+            format_time(clip.last_copied_at),
+        ))
 }
 
-fn info_row(label: &'static str, value: String) -> impl IntoElement {
+fn info_row(label: String, value: String) -> impl IntoElement {
     view()
         .flex_row()
         .items_center()
@@ -1761,9 +1875,9 @@ fn footer_inner(state: State) -> impl IntoElement {
     let total = state.clips.get().len();
     let visible = visible_ids(&state.rows.get()).len();
     let count = if visible == total {
-        format!("剪贴板历史 · {total} 条")
+        t!("panel.history_count", count = total)
     } else {
-        format!("剪贴板历史 · {visible} / {total} 条")
+        t!("panel.history_filtered", visible = visible, total = total)
     };
     let mut right = view().flex_row().items_center().gap_4();
     if let Some(message) = state.flash.get() {
@@ -1817,7 +1931,7 @@ fn actions_button(state: State) -> impl IntoElement {
         .border_1()
         .border_color(theme::border())
         .child(
-            text("操作")
+            text(t!("panel.actions"))
                 .text_size(px(12.0))
                 .text_color(theme::muted_fg()),
         )

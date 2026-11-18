@@ -7,6 +7,7 @@
   "rust": ".",
   "root": "App",
   "appearance": "system",
+  "locales": ["en", "zh"],
   "macos": {
     "activationPolicy": "accessory"
   },

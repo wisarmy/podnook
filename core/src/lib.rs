@@ -64,16 +64,6 @@ impl ClipKind {
             _ => None,
         }
     }
-
-    /// 界面上的中文名。
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Text => "文本",
-            Self::Link => "链接",
-            Self::Image => "图片",
-            Self::File => "文件",
-        }
-    }
 }
 
 /// 一次剪贴板快照（macOS 侧读到的东西）。
@@ -209,29 +199,6 @@ pub fn preview_for_text(text: &str) -> String {
     }
 }
 
-/// 图片条目的预览文本。
-pub fn preview_for_image(size: Option<(u32, u32)>) -> String {
-    match size {
-        Some((w, h)) => format!("图片 {w}×{h}"),
-        None => "图片".to_string(),
-    }
-}
-
-/// 文件条目的预览文本：第一个文件名，多个则加「等 N 个」。
-pub fn preview_for_files(paths: &[String]) -> String {
-    let name = |p: &str| {
-        std::path::Path::new(p)
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| p.to_string())
-    };
-    match paths {
-        [] => "文件".to_string(),
-        [one] => name(one),
-        [first, rest @ ..] => format!("{} 等 {} 个文件", name(first), rest.len() + 1),
-    }
-}
-
 /// 内容指纹（未截断的完整内容）。
 pub fn hash_bytes(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
@@ -308,20 +275,6 @@ mod tests {
         let p = preview_for_text(&long);
         assert_eq!(p.chars().count(), 81); // 80 + 省略号
         assert!(p.ends_with('…'));
-    }
-
-    #[test]
-    fn previews_for_image_and_files() {
-        assert_eq!(preview_for_image(Some((1699, 334))), "图片 1699×334");
-        assert_eq!(preview_for_image(None), "图片");
-        assert_eq!(
-            preview_for_files(&["/tmp/报告.pdf".into()]),
-            "报告.pdf"
-        );
-        assert_eq!(
-            preview_for_files(&["/a/一.png".into(), "/a/二.png".into(), "/a/三.png".into()]),
-            "一.png 等 3 个文件"
-        );
     }
 
     #[test]

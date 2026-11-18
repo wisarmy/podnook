@@ -47,6 +47,7 @@ jobs:
 
       - name: Test
         run: |
+          ./scripts/check-strings.py
           cargo test -p podnook-core
           nsh test
 

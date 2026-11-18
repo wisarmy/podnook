@@ -11,6 +11,7 @@ mod login_item;
 #[cfg(target_os = "macos")]
 mod paste;
 mod history;
+mod locale;
 mod settings;
 pub mod theme;
 mod ui;
@@ -49,7 +50,7 @@ pub fn App() -> impl IntoElement {
     setup_system();
     open_panel_once();
 
-    // 宿主窗口只负责让引擎跑起来，马上藏起来。
+    // 宿主窗口只负责让引擎跑起来，马上藏起来；界面在面板窗口里。
     set_timeout(Duration::from_millis(0), || main_window().hide());
     ui::shell()
 }
@@ -85,10 +86,7 @@ fn apply_window_behavior() {
             | NSWindowCollectionBehavior::FullScreenAuxiliary
             | NSWindowCollectionBehavior::IgnoresCycle;
         for window in app.windows().iter() {
-            let title = window.title().to_string();
-            if title == "Podnook" || title == "Podnook 设置" {
-                window.setCollectionBehavior(behavior);
-            }
+            window.setCollectionBehavior(behavior);
         }
     });
 }
@@ -177,20 +175,62 @@ fn setup_system() {
     } else {
         settings::DEFAULT_HOTKEY
     };
+    // 语言先于任何界面文案生效。
+    locale::apply(store.as_deref());
     register_hotkey(configured);
+}
 
+fn install_tray() {
     set_tray(
         tray()
             .icon(asset!("tray.svg"))
             .tooltip("Podnook")
             .on_click(|_| show_panel())
             .menu([
-                MenuItem::new("打开 Podnook").on_select(show_panel),
-                MenuItem::new("设置…").on_select(open_settings),
+                MenuItem::new(t!("tray.open")).on_select(show_panel),
+                MenuItem::new(t!("tray.settings")).on_select(open_settings),
                 MenuItem::separator(),
-                MenuItem::new("退出").on_select(quit),
+                MenuItem::new(t!("tray.quit")).on_select(quit),
             ]),
     );
+}
+
+/// 语言切换后，把已经开着的窗口标题换成新语言。
+pub fn refresh_titles() {    SETTINGS_WINDOW.with(|slot| {
+        if let Some(window) = slot.borrow().as_ref() {
+            let mut attributes = WindowAttributes::default();
+            attributes.title = Some(t!("app.settings_title"));
+            window.set(attributes);
+        }
+    });
+    ui::refresh_editor_title();
+}
+
+/// 切换语言后重建窗口：已经构建好的静态文案不会自己跟着变。
+pub fn rebuild_windows() {
+    let settings_visible = SETTINGS_WINDOW.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .is_some_and(|window| window.state().is_some_and(|state| state.visible))
+    });
+    set_timeout(Duration::from_millis(0), move || {
+        SETTINGS_WINDOW.with(|slot| {
+            if let Some(window) = slot.borrow_mut().take() {
+                window.close();
+            }
+        });
+        PANEL.with(|slot| {
+            if let Some(window) = slot.borrow_mut().take() {
+                window.close();
+            }
+        });
+        ui::forget_state();
+        open_panel_once();
+        hide_panel();
+        if settings_visible {
+            open_settings();
+        }
+    });
 }
 
 
@@ -266,7 +306,7 @@ pub fn open_settings() {
     let window = panel_window()
         .id("settings")
         .kind(WindowKind::Panel)
-        .title("Podnook 设置")
+        .title(t!("app.settings_title"))
         .default_size(size(px(560.0), px(680.0)))
         .attributes(attributes)
         .content(ui::settings);

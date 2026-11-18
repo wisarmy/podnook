@@ -21,12 +21,13 @@ impl Status {
         matches!(self, Self::Enabled | Self::RequiresApproval)
     }
 
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
+        use nsh_core::prelude::t;
         match self {
-            Self::Enabled => "已开启",
-            Self::Disabled => "未开启",
-            Self::RequiresApproval => "等待系统批准",
-            Self::NotFound => "需要打包后的 .app",
+            Self::Enabled => t!("login.on"),
+            Self::Disabled => t!("login.off"),
+            Self::RequiresApproval => t!("login.pending"),
+            Self::NotFound => t!("login.unpackaged"),
         }
     }
 }
@@ -79,10 +80,11 @@ pub fn set_enabled(enabled: bool) -> Result<Status, String> {
 #[cfg(target_os = "macos")]
 fn describe(error: &NSError) -> String {
     let message = error.localizedDescription().to_string();
-    format!("{message}（code {}）", error.code())
+    format!("{message} (code {})", error.code())
 }
 
 #[cfg(not(target_os = "macos"))]
 pub fn set_enabled(_enabled: bool) -> Result<Status, String> {
-    Err("仅支持 macOS".to_string())
+    use nsh_core::prelude::t;
+    Err(t!("login.error").to_string())
 }

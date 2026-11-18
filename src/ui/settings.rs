@@ -17,6 +17,7 @@ use crate::{login_item, settings as prefs, theme};
 pub fn settings() -> impl IntoElement {
     let store = crate::history::init();
     let config = prefs::load(store.as_deref());
+    let language_store = store.clone();
 
     let hotkey = signal(config.hotkey.clone());
     let recording = signal(false);
@@ -98,7 +99,7 @@ pub fn settings() -> impl IntoElement {
                 dismiss_state.set(None);
                 if !was_success {
                     crate::register_hotkey(&hotkey.get());
-                    show_notice(notice, "已取消");
+                    show_notice(notice, t!("notice.cancelled"));
                 }
             };
             popover = popover.child(
@@ -128,19 +129,19 @@ pub fn settings() -> impl IntoElement {
                             ),
                     )
                     .child(
-                        text("已设置新热键")
+                        text(t!("settings.hotkey_set"))
                             .text_size(px(13.0))
                             .text_color(theme::fg()),
                     );
             } else {
                 popover = popover
                     .child(
-                        text("例如 ⇧⌘Space")
+                        text(t!("settings.hotkey_example"))
                             .text_size(px(12.0))
                             .text_color(theme::muted_fg()),
                     )
                     .child(
-                        text("录制中…")
+                        text(t!("settings.recording"))
                             .text_size(px(13.0))
                             .text_color(theme::fg()),
                     );
@@ -177,7 +178,7 @@ pub fn settings() -> impl IntoElement {
                         set_timeout(std::time::Duration::from_millis(1200), move || {
                             clear.set(None)
                         });
-                        show_notice(notice_signal, "已应用");
+                        show_notice(notice_signal, t!("notice.applied"));
                     } else {
                         hotkey_signal.set(previous_for_result.clone());
                         crate::register_hotkey(&previous_for_result);
@@ -185,12 +186,12 @@ pub fn settings() -> impl IntoElement {
                     }
                 }) {
                     crate::register_hotkey(&previous);
-                    show_notice(notice, "组合键无效");
+                    show_notice(notice, t!("notice.invalid_hotkey"));
                 }
             }
             None => {
                 crate::register_hotkey(&hotkey.get());
-                show_notice(notice, "已取消");
+                show_notice(notice, t!("notice.cancelled"));
             }
         }
     });
@@ -212,14 +213,14 @@ pub fn settings() -> impl IntoElement {
     for value in [500_i64, 1000, 5000] {
         let store = store.clone();
         count_row = count_row.child(choice(
-            format!("{value} 条"),
+            t!("settings.items", value = value),
             move || count.get() == value,
             move || {
                 count.set(value);
                 if let Some(store) = &store {
                     prefs::write(store, SETTING_RETENTION_COUNT, value);
                 }
-                show_notice(notice, "已保存");
+                show_notice(notice, t!("notice.saved"));
             },
         ));
     }
@@ -229,14 +230,14 @@ pub fn settings() -> impl IntoElement {
     for value in [7_i64, 30, 90, 365] {
         let store = store.clone();
         days_row = days_row.child(choice(
-            format!("{value} 天"),
+            t!("settings.days", value = value),
             move || days.get() == value,
             move || {
                 days.set(value);
                 if let Some(store) = &store {
                     prefs::write(store, SETTING_RETENTION_DAYS, value);
                 }
-                show_notice(notice, "已保存");
+                show_notice(notice, t!("notice.saved"));
             },
         ));
     }
@@ -247,7 +248,14 @@ pub fn settings() -> impl IntoElement {
         if let Some(store) = &store_for_auto {
             prefs::write_bool(store, SETTING_AUTO_PASTE, on);
         }
-        show_notice(notice, if on { "已开启自动粘回" } else { "已关闭：回车仅复制" });
+        show_notice(
+            notice,
+            if on {
+                t!("notice.auto_paste_on")
+            } else {
+                t!("notice.auto_paste_off")
+            },
+        );
     });
 
     let store_for_login = store.clone();
@@ -268,11 +276,11 @@ pub fn settings() -> impl IntoElement {
                     if let Some(store) = &store_for_login {
                         prefs::write_bool(store, SETTING_LAUNCH_AT_LOGIN, status.is_on());
                     }
-                    show_notice(notice, "已更新登录项");
+                    show_notice(notice, t!("notice.login_updated"));
                 }
                 Err(error) => {
                     login.set(!on);
-                    show_notice(notice, format!("登录项失败：{error}"));
+                    show_notice(notice, t!("notice.login_failed", error = error));
                 }
             }
         }));
@@ -282,7 +290,11 @@ pub fn settings() -> impl IntoElement {
         .items_center()
         .gap_3()
         .child(dynamic(move || {
-            text(if trusted.get() { "已授权" } else { "未授权" })
+            text(if trusted.get() {
+                t!("settings.granted")
+            } else {
+                t!("settings.not_granted")
+            })
                 .text_size(px(12.0))
                 .text_color(if trusted.get() {
                     theme::primary()
@@ -290,12 +302,12 @@ pub fn settings() -> impl IntoElement {
                     theme::muted_fg()
                 })
         }))
-        .child(choice("请求权限", || false, || {
+        .child(choice(t!("settings.request"), || false, || {
             // 系统设置会盖在浮层下面；先收起自己的设置窗口。
             crate::hide_settings();
             crate::paste::request_trust();
         }))
-        .child(choice("打开系统设置", || false, || {
+        .child(choice(t!("settings.open_settings"), || false, || {
             crate::hide_settings();
             crate::paste::open_accessibility_settings()
         }));
@@ -304,7 +316,7 @@ pub fn settings() -> impl IntoElement {
     let store_for_clear = store.clone();
     let clear_control = dynamic(move || {
         if confirm_clear.get() {
-            choice("确认清空", || true, {
+            choice(t!("settings.clear_confirm"), || true, {
                 let store = store_for_clear.clone();
                 move || {
                     if let Some(store) = &store {
@@ -314,13 +326,13 @@ pub fn settings() -> impl IntoElement {
                         crate::history::bump();
                     }
                     confirm_clear.set(false);
-                    show_notice(notice, "已清空历史");
+                    show_notice(notice, t!("notice.cleared"));
                 }
             })
         } else {
-            choice("清空历史", || false, move || {
+            choice(t!("settings.clear"), || false, move || {
                 confirm_clear.set(true);
-                show_notice(notice, "再按一次确认");
+                show_notice(notice, t!("notice.confirm_again"));
             })
         }
     });
@@ -345,7 +357,7 @@ pub fn settings() -> impl IntoElement {
                 .placeholder("com.apple.Terminal")
                 .text_size(px(12.0)),
         )
-        .child(choice("添加", || false, move || {
+        .child(choice(t!("settings.add"), || false, move || {
             let bundle = new_bundle.get().trim().to_string();
             if bundle.is_empty() {
                 // 设置窗口是非激活浮层，输入框点击不一定拿到键盘；
@@ -354,13 +366,15 @@ pub fn settings() -> impl IntoElement {
                 window.focus();
                 let input = bundle_input;
                 set_timeout(std::time::Duration::from_millis(60), move || input.focus());
-                show_notice(notice, "先输入 bundle id");
+                show_notice(notice, t!("notice.bundle_required"));
                 return;
             }
             add_ignored(bundle);
             new_bundle.set(String::new());
         }))
-        .child(choice("选择 App…", || false, move || picker.set(!picker.get())));
+        .child(choice(t!("settings.choose_app"), || false, move || {
+            picker.set(!picker.get())
+        }));
 
     let store_for_picker = store.clone();
     let picker_rows = dynamic(move || {
@@ -378,7 +392,7 @@ pub fn settings() -> impl IntoElement {
             .border_t_color(theme::border());
         if apps.is_empty() {
             rows = rows.child(view().px_4().py_3().child(
-                text("没有可添加的正在运行的 App")
+                text(t!("settings.no_running_apps"))
                     .text_size(px(12.0))
                     .text_color(theme::muted_fg()),
             ));
@@ -410,7 +424,7 @@ pub fn settings() -> impl IntoElement {
             );
         }
         rows.child(view().px_4().py_2().child(
-            text("只列出正在运行的 App；其它 App 用上面的输入框手动添加")
+            text(t!("settings.running_apps_note"))
                 .text_size(px(11.0))
                 .text_color(theme::muted_fg()),
         ))
@@ -425,7 +439,7 @@ pub fn settings() -> impl IntoElement {
                     .px_4()
                     .py_3()
                     .child(
-                        text("还没有忽略任何 App")
+                        text(t!("settings.no_ignored"))
                             .text_size(px(12.0))
                             .text_color(theme::muted_fg()),
                     ),
@@ -445,14 +459,14 @@ pub fn settings() -> impl IntoElement {
                     .border_b(px(1.0))
                     .border_b_color(theme::border())
                     .child(text(bundle).truncate().text_size(px(12.0)))
-                    .child(choice("移除", || false, move || {
+                    .child(choice(t!("settings.remove"), || false, move || {
                         let mut list = ignored.get();
                         list.retain(|item| item != &remove);
                         ignored.set(list.clone());
                         if let Some(store) = &store {
                             prefs::save_ignored(store, &list);
                         }
-                        show_notice(notice, "已移除");
+                        show_notice(notice, t!("notice.removed"));
                     })),
             );
         }
@@ -466,7 +480,7 @@ pub fn settings() -> impl IntoElement {
         .child(ignored_rows)
         .child(
             view().px_4().py_2().child(
-                text("按 bundle id 忽略；例如 com.apple.Terminal")
+                text(t!("settings.bundle_note"))
                     .text_size(px(11.0))
                     .text_color(theme::muted_fg()),
             ),
@@ -475,41 +489,63 @@ pub fn settings() -> impl IntoElement {
     let about_rows = view()
         .flex_col()
         .child(setting_row(
-            "版本",
+            t!("settings.version"),
             text(format!("v{}", env!("CARGO_PKG_VERSION")))
                 .text_size(px(12.0))
                 .text_color(theme::muted_fg()),
         ))
         .child(setting_row(
-            "仓库",
+            t!("settings.repository"),
             choice("GitHub", || false, || {
                 crate::paste::open_external("https://github.com/wisarmy/podnook")
             }),
         ))
         .child(view().px_4().py_3().child(
-            text("本地优先 · 数据不上传")
+            text(t!("settings.local_first"))
                 .text_size(px(12.0))
                 .text_color(theme::muted_fg()),
         ));
 
     let history_rows = view()
         .flex_col()
-        .child(setting_row("保留条数", count_row))
-        .child(setting_row("保留天数", days_row))
-        .child(setting_row("清空历史", clear_control));
+        .child(setting_row(t!("settings.keep_count"), count_row))
+        .child(setting_row(t!("settings.keep_days"), days_row))
+        .child(setting_row(t!("settings.clear"), clear_control));
+
+    let store_for_language = language_store;
+    let language = signal(crate::locale::current(store_for_language.as_deref()));
+    let mut language_row = view().flex_row().items_center().gap_2();
+    for (value, label) in [
+        (
+            crate::locale::Choice::System,
+            t!("settings.language_system"),
+        ),
+        (crate::locale::Choice::Chinese, t!("settings.language_zh")),
+        (crate::locale::Choice::English, t!("settings.language_en")),
+    ] {
+        let store_for_language = store_for_language.clone();
+        language_row = language_row.child(choice(
+            label,
+            move || language.get() == value,
+            move || {
+                language.set(value);
+                crate::locale::set(store_for_language.as_deref(), value);
+            },
+        ));
+    }
 
     let paste_rows = view()
         .flex_col()
-        .child(setting_row("自动粘回", auto_toggle))
+        .child(setting_row(t!("settings.auto_paste"), auto_toggle))
         .child(view().px_4().pb_3().child(
-            text("关闭后，回车只把条目复制回剪贴板，不模拟 ⌘V。")
+            text(t!("settings.auto_paste_note"))
                 .text_size(px(11.0))
                 .text_color(theme::muted_fg()),
         ));
 
-    let login_rows = view().flex_col().child(setting_row("开机自启", login_row)).child(
+    let login_rows = view().flex_col().child(setting_row(t!("settings.launch_at_login"), login_row)).child(
         view().px_4().pb_3().child(
-            text("使用 macOS 登录项；开发用的裸 runner 不支持，打包后的 .app 才有效。")
+            text(t!("settings.login_note"))
                 .text_size(px(11.0))
                 .text_color(theme::muted_fg()),
         ),
@@ -517,9 +553,9 @@ pub fn settings() -> impl IntoElement {
 
     let permission_rows = view()
         .flex_col()
-        .child(setting_row("辅助功能", permission_row))
+        .child(setting_row(t!("settings.accessibility"), permission_row))
         .child(view().px_4().pb_3().child(
-            text("首次使用点「请求权限」，在系统设置里打开开关即可。之后用同一签名更新 App，不需要重新授权。")
+            text(t!("settings.permission_note"))
                 .text_size(px(11.0))
                 .text_color(theme::muted_fg()),
         ));
@@ -538,16 +574,24 @@ pub fn settings() -> impl IntoElement {
                     view()
                         .z_index(move || if recording.get() || success.get().is_some() { 20 } else { 0 })
                         .child(settings_section(
-                            "呼出",
-                            view().flex_col().child(setting_row("呼出热键", record_control)),
+                            t!("settings.summon"),
+                            view()
+                                .flex_col()
+                                .child(setting_row(t!("settings.hotkey"), record_control)),
                         )),
                 )
-                .child(settings_section("历史", history_rows))
-                .child(settings_section("粘贴", paste_rows))
-                .child(settings_section("登录项", login_rows))
-                .child(settings_section("权限", permission_rows))
-                .child(settings_section("忽略的 App", ignored_card))
-                .child(settings_section("关于", about_rows))
+                .child(settings_section(t!("settings.history"), history_rows))
+                .child(settings_section(t!("settings.paste"), paste_rows))
+                .child(settings_section(t!("settings.login_section"), login_rows))
+                .child(settings_section(t!("settings.permissions"), permission_rows))
+                .child(settings_section(
+                    t!("settings.language"),
+                    view()
+                        .flex_col()
+                        .child(setting_row(t!("settings.language_row"), language_row)),
+                ))
+                .child(settings_section(t!("settings.ignored"), ignored_card))
+                .child(settings_section(t!("settings.about"), about_rows))
                 .child(
                     view().h(px(18.0)).child(dynamic(move || match notice.get() {
                         Some(message) => text(message)
@@ -559,7 +603,7 @@ pub fn settings() -> impl IntoElement {
         ))
 }
 
-fn settings_section(title: &'static str, rows: View) -> View {
+fn settings_section(title: String, rows: View) -> View {
     view()
         .flex_col()
         .gap_2()
@@ -582,7 +626,7 @@ fn settings_section(title: &'static str, rows: View) -> View {
         )
 }
 
-fn setting_row(label: &'static str, control: impl IntoElement) -> View {
+fn setting_row(label: String, control: impl IntoElement) -> View {
     view()
         .flex_row()
         .items_center()
@@ -648,7 +692,7 @@ fn toggle_control(on: Signal<bool>, on_change: impl Fn(bool) + 'static) -> View 
             }
         })
         .child(
-            text(move || if on.get() { "开" } else { "关" })
+            text(move || if on.get() { t!("login.on") } else { t!("login.off") })
                 .text_size(px(11.0))
                 .text_color(move || {
                     if on.get() {
@@ -672,7 +716,7 @@ fn ignore_bundle(
     }
     let mut list = ignored.get();
     if list.iter().any(|item| item == &bundle) {
-        show_notice(notice, "已经在列表里");
+        show_notice(notice, t!("notice.already_listed"));
         return;
     }
     list.push(bundle.clone());
@@ -680,7 +724,7 @@ fn ignore_bundle(
     if let Some(store) = &store {
         prefs::save_ignored(store, &list);
     }
-    show_notice(notice, format!("已添加 {bundle}"));
+    show_notice(notice, t!("notice.added", bundle = bundle));
 }
 
 fn running_apps() -> Vec<(String, String)> {

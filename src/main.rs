@@ -23,5 +23,5 @@ fn main() -> impl std::process::Termination {
 
 #[cfg(not(target_os = "macos"))]
 fn main() {
-    eprintln!("Podnook v0.1 只支持 macOS。");
+    eprintln!("Podnook v0.1 runs on macOS only.");
 }
