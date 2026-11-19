@@ -36,14 +36,24 @@ thread_local! {
     static STATE: std::cell::RefCell<Option<State>> = const { std::cell::RefCell::new(None) };
     /// 编辑内容窗口。
     static EDITOR: std::cell::RefCell<Option<WindowRef>> = const { std::cell::RefCell::new(None) };
+    /// 下次呼出是否回到默认选中：只有 Esc 收起时才重置，点别处消失则保留。
+    static RESET_ON_SHOW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// 面板每次呼出：清空搜索、选中第一条、聚焦搜索框。
+/// Esc 收起面板：下次呼出清空搜索并回到最新一条。
+pub fn reset_on_next_show() {
+    RESET_ON_SHOW.with(|flag| flag.set(true));
+}
+
+/// 面板每次呼出：Esc 收起时清空搜索、回到最新一条；点别处消失则保留上次的选择。
 pub fn prepare_for_show() {
+    let reset = RESET_ON_SHOW.with(|flag| flag.replace(false));
     STATE.with(|slot| {
         if let Some(state) = slot.borrow().as_ref() {
-            state.query.set(String::new());
-            state.selected.set(None);
+            if reset {
+                state.query.set(String::new());
+                state.selected.set(None);
+            }
             state.actions_open.set(false);
             state.actions_mode.set(ActionMode::Main);
             state.actions_query.set(String::new());
@@ -1026,6 +1036,7 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
         if s.actions_open.get() {
             close_actions(&s);
         } else {
+            reset_on_next_show();
             crate::hide_panel();
         }
     });
@@ -1309,6 +1320,7 @@ fn run_action(state: &State, store: Option<&Store>, kind: ActionKind) {
                 Ok(count) => {
                     crate::history::bump();
                     reload(state, store);
+                    state.selected.set(default_selection(&state.rows.get()));
                     close_actions(state);
                     flash(
                         state,
@@ -1330,6 +1342,7 @@ fn run_action(state: &State, store: Option<&Store>, kind: ActionKind) {
                 Ok(count) => {
                     crate::history::bump();
                     reload(state, store);
+                    state.selected.set(default_selection(&state.rows.get()));
                     close_actions(state);
                     flash(state, t!("flash.cleared", count = count));
                 }
@@ -1469,13 +1482,28 @@ fn delete_selected(state: &State, store: Option<&Store>) {
         return;
     };
     let Some(store) = store else { return };
+    let previous_rows = state.rows.get();
     if let Err(e) = store.delete(clip.id) {
         log::error!("delete {}: {e}", clip.id);
         return;
     }
     crate::history::bump();
     reload(state, store);
+    let rows = state.rows.get();
+    state
+        .selected
+        .set(selection_after_delete(&previous_rows, &rows, clip.id));
     flash(state, t!("flash.deleted"));
+}
+
+/// 删除后选中的条目：被删条目的下一条；删的是最后一条时回到最新一条。
+fn selection_after_delete(rows_before: &[Row], rows_after: &[Row], deleted: i64) -> Option<i64> {
+    let index = visible_ids(rows_before)
+        .iter()
+        .position(|id| *id == deleted);
+    index
+        .and_then(|index| visible_ids(rows_after).get(index).copied())
+        .or_else(|| default_selection(rows_after))
 }
 
 fn flash(state: &State, message: impl Into<String>) {
@@ -1542,6 +1570,7 @@ fn search_box(state: State) -> impl IntoElement {
                             if state.actions_open.get() {
                                 close_actions(&state);
                             } else {
+                                reset_on_next_show();
                                 crate::hide_panel();
                             }
                         }
@@ -2008,5 +2037,71 @@ mod tests {
     #[test]
     fn default_selection_is_empty_without_clips() {
         assert_eq!(default_selection(&[]), None);
+    }
+}
+
+#[cfg(test)]
+mod delete_tests {
+    use super::*;
+
+    fn clip(id: i64, pinned: bool) -> Clip {
+        Clip {
+            id,
+            kind: ClipKind::Text,
+            content: Some("x".into()),
+            preview: "x".into(),
+            hash: String::new(),
+            image_path: None,
+            image_w: None,
+            image_h: None,
+            image_bytes: None,
+            file_uris: Vec::new(),
+            source_app: None,
+            source_bundle: None,
+            byte_size: 1,
+            truncated: false,
+            created_at: 0,
+            last_copied_at: 0,
+            pinned,
+            copy_count: 1,
+        }
+    }
+
+    fn rows(ids: &[(i64, bool)]) -> Vec<Row> {
+        let mut rows = vec![Row::Section("Pinned".into())];
+        for (id, pinned) in ids {
+            if !pinned {
+                rows.push(Row::Section("Today".into()));
+                break;
+            }
+            rows.push(Row::Clip(clip(*id, *pinned)));
+        }
+        rows.extend(
+            ids.iter()
+                .filter(|(_, pinned)| !pinned)
+                .map(|(id, pinned)| Row::Clip(clip(*id, *pinned))),
+        );
+        rows
+    }
+
+    #[test]
+    fn deleting_selects_the_next_entry() {
+        let before = rows(&[(1, true), (2, false), (3, false), (4, false)]);
+        let after = rows(&[(1, true), (3, false), (4, false)]);
+        assert_eq!(selection_after_delete(&before, &after, 2), Some(3));
+    }
+
+    #[test]
+    fn deleting_the_last_entry_selects_the_newest() {
+        let before = rows(&[(1, true), (2, false), (3, false)]);
+        let after = rows(&[(1, true), (2, false)]);
+        assert_eq!(selection_after_delete(&before, &after, 3), Some(2));
+    }
+
+    #[test]
+    fn deleting_the_only_unpinned_entry_selects_the_first_pinned() {
+        let before = rows(&[(1, true), (2, false)]);
+        let after = rows(&[(1, true)]);
+        assert_eq!(selection_after_delete(&before, &after, 2), Some(1));
     }
 }
