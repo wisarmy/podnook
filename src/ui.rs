@@ -36,6 +36,8 @@ thread_local! {
     static STATE: std::cell::RefCell<Option<State>> = const { std::cell::RefCell::new(None) };
     /// 编辑内容窗口。
     static EDITOR: std::cell::RefCell<Option<WindowRef>> = const { std::cell::RefCell::new(None) };
+    /// 历史列表的滚动容器：删掉最后一条时把滚动条真正拉回顶部。
+    static SIDEBAR: std::cell::RefCell<Option<ElementRef>> = const { std::cell::RefCell::new(None) };
     /// 历史列表每一行的 ref：选中项变化时把它滚进视野。
     static ROW_REFS: std::cell::RefCell<std::collections::HashMap<i64, ElementRef>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
@@ -53,6 +55,17 @@ fn select_and_reveal(state: &State, id: Option<i64>) {
     if let Some(id) = id {
         reveal_row(id);
     }
+}
+
+/// 把列表滚到最顶部（分组标题也露出来），而不是只把首行对齐到可视区。
+fn scroll_sidebar_to_top() {
+    set_timeout(Duration::from_millis(0), || {
+        SIDEBAR.with(|slot| {
+            if let Some(scroll) = slot.borrow().as_ref() {
+                scroll.scroll_to_offset(px(0.0), true);
+            }
+        });
+    });
 }
 
 /// 把某一行滚进视野：延后一帧，等新布局提交后再滚。
@@ -1522,9 +1535,7 @@ fn delete_selected(state: &State, store: Option<&Store>) {
     state.selected.set(next);
     // 只有删掉最后一条、选中项跳到列表另一端时才滚动；其余删除不动滚动位置。
     if jump_to_top {
-        if let Some(id) = next {
-            reveal_row(id);
-        }
+        scroll_sidebar_to_top();
     }
     flash(state, t!("flash.deleted"));
 }
@@ -1667,6 +1678,8 @@ enum RowKey {
 fn sidebar(state: State) -> impl IntoElement {
     let rows = state.rows;
     let selected = state.selected;
+    let scroll_ref = element_ref();
+    SIDEBAR.with(|slot| *slot.borrow_mut() = Some(scroll_ref));
     view()
         .w(px(theme::SIDEBAR_WIDTH))
         .flex_col()
@@ -1674,7 +1687,7 @@ fn sidebar(state: State) -> impl IntoElement {
         .border_r(px(1.0))
         .border_r_color(theme::border())
         .child(
-            scroll().flex_1().child(
+            scroll().element_ref(&scroll_ref).flex_1().child(
                 view().flex_col().py_2().child(each(
                     move || rows.get(),
                     |row| match row {
