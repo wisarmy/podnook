@@ -63,6 +63,9 @@ git push origin v0.1.0
    - 生成 `Podnook-<version>-arm64.dmg` 和 `Podnook-<version>-x86_64.dmg`，附 SHA256；
    - 创建 GitHub Release。
 
+4. Release 说明由 `--generate-notes` 从提交生成，提交标题是中文；发布后把说明改成
+   英文段落在前、中文原文附后，用户和英文访客都能读懂当前限制与安装步骤。
+
 手动运行：**Actions → Release → Run workflow**。它只构建并上传 artifact，方便在发 tag 前验证。
 
 ## 首次打开
