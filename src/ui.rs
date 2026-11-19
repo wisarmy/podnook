@@ -50,9 +50,13 @@ fn row_ref(id: i64) -> ElementRef {
 /// 选中某条并把它带进视野（Rolling 到起点对齐：首行即顶部）。
 fn select_and_reveal(state: &State, id: Option<i64>) {
     state.selected.set(id);
-    let Some(id) = id else {
-        return;
-    };
+    if let Some(id) = id {
+        reveal_row(id);
+    }
+}
+
+/// 把某一行滚进视野：延后一帧，等新布局提交后再滚。
+fn reveal_row(id: i64) {
     let row = row_ref(id);
     set_timeout(Duration::from_millis(0), move || {
         row.reveal(RevealOptions::default())
@@ -1514,19 +1518,31 @@ fn delete_selected(state: &State, store: Option<&Store>) {
     crate::history::bump();
     reload(state, store);
     let rows = state.rows.get();
-    let next = selection_after_delete(&previous_rows, &rows, clip.id);
-    select_and_reveal(state, next);
+    let (next, jump_to_top) = selection_after_delete(&previous_rows, &rows, clip.id);
+    state.selected.set(next);
+    // 只有删掉最后一条、选中项跳到列表另一端时才滚动；其余删除不动滚动位置。
+    if jump_to_top {
+        if let Some(id) = next {
+            reveal_row(id);
+        }
+    }
     flash(state, t!("flash.deleted"));
 }
 
-/// 删除后选中的条目：被删条目的下一条；删的是最后一条时回到最新一条。
-fn selection_after_delete(rows_before: &[Row], rows_after: &[Row], deleted: i64) -> Option<i64> {
-    let index = visible_ids(rows_before)
-        .iter()
-        .position(|id| *id == deleted);
-    index
-        .and_then(|index| visible_ids(rows_after).get(index).copied())
-        .or_else(|| default_selection(rows_after))
+/// 删除后选中的条目，以及是否要滚回顶部。删最后一条时选中第一条（不分固定
+/// 与否）并回到顶部；其余情况选中下一条，不动滚动位置。
+fn selection_after_delete(
+    rows_before: &[Row],
+    rows_after: &[Row],
+    deleted: i64,
+) -> (Option<i64>, bool) {
+    let before = visible_ids(rows_before);
+    let after = visible_ids(rows_after);
+    let index = before.iter().position(|id| *id == deleted);
+    if index.is_some_and(|index| index + 1 == before.len()) {
+        return (after.first().copied(), true);
+    }
+    (index.and_then(|index| after.get(index).copied()), false)
 }
 
 fn flash(state: &State, message: impl Into<String>) {
@@ -2112,20 +2128,20 @@ mod delete_tests {
     fn deleting_selects_the_next_entry() {
         let before = rows(&[(1, true), (2, false), (3, false), (4, false)]);
         let after = rows(&[(1, true), (3, false), (4, false)]);
-        assert_eq!(selection_after_delete(&before, &after, 2), Some(3));
+        assert_eq!(selection_after_delete(&before, &after, 2), (Some(3), false));
     }
 
     #[test]
     fn deleting_the_last_entry_selects_the_newest() {
         let before = rows(&[(1, true), (2, false), (3, false)]);
         let after = rows(&[(1, true), (2, false)]);
-        assert_eq!(selection_after_delete(&before, &after, 3), Some(2));
+        assert_eq!(selection_after_delete(&before, &after, 3), (Some(1), true));
     }
 
     #[test]
     fn deleting_the_only_unpinned_entry_selects_the_first_pinned() {
         let before = rows(&[(1, true), (2, false)]);
         let after = rows(&[(1, true)]);
-        assert_eq!(selection_after_delete(&before, &after, 2), Some(1));
+        assert_eq!(selection_after_delete(&before, &after, 2), (Some(1), true));
     }
 }
