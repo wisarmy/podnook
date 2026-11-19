@@ -164,10 +164,13 @@ pub fn shell() -> impl IntoElement {
     // 搜索、筛选、增删之后，保证选中的仍然是可见条目。
     let sel = state.clone();
     effect(move || {
-        let ids = visible_ids(&sel.rows.get());
-        let current = sel.selected.get();
-        if !current.is_some_and(|id| ids.contains(&id)) {
-            sel.selected.set(ids.first().copied());
+        let rows = sel.rows.get();
+        let ids = visible_ids(&rows);
+        match sel.selected.get() {
+            // 呼出或首次加载：默认落在最新的未固定条目（Raycast 行为）。
+            None => sel.selected.set(default_selection(&rows)),
+            Some(id) if !ids.contains(&id) => sel.selected.set(ids.first().copied()),
+            _ => {}
         }
     });
 
@@ -734,6 +737,21 @@ fn visible_ids(rows: &[Row]) -> Vec<i64> {
             Row::Section(_) => None,
         })
         .collect()
+}
+
+/// 呼出时默认选中的条目：第一条未固定的（最新的捕获）；全部固定时取第一条。
+fn default_selection(rows: &[Row]) -> Option<i64> {
+    let mut first = None;
+    for row in rows {
+        let Row::Clip(clip) = row else {
+            continue;
+        };
+        first.get_or_insert(clip.id);
+        if !clip.pinned {
+            return Some(clip.id);
+        }
+    }
+    first
 }
 
 fn build_rows(clips: &[Clip], query: &str, filter: Option<ClipKind>) -> Vec<Row> {
@@ -1935,4 +1953,60 @@ fn actions_button(state: State) -> impl IntoElement {
                 .text_size(px(11.0))
                 .text_color(theme::muted_fg()),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn clip(id: i64, pinned: bool) -> Clip {
+        Clip {
+            id,
+            kind: ClipKind::Text,
+            content: Some("x".into()),
+            preview: "x".into(),
+            hash: String::new(),
+            image_path: None,
+            image_w: None,
+            image_h: None,
+            image_bytes: None,
+            file_uris: Vec::new(),
+            source_app: None,
+            source_bundle: None,
+            byte_size: 1,
+            truncated: false,
+            created_at: 0,
+            last_copied_at: 0,
+            pinned,
+            copy_count: 1,
+        }
+    }
+
+    #[test]
+    fn default_selection_skips_pinned() {
+        let rows = vec![
+            Row::Section("Pinned".into()),
+            Row::Clip(clip(1, true)),
+            Row::Clip(clip(2, true)),
+            Row::Section("Today".into()),
+            Row::Clip(clip(3, false)),
+            Row::Clip(clip(4, false)),
+        ];
+        assert_eq!(default_selection(&rows), Some(3));
+    }
+
+    #[test]
+    fn default_selection_falls_back_to_the_first_pinned() {
+        let rows = vec![
+            Row::Section("Pinned".into()),
+            Row::Clip(clip(1, true)),
+            Row::Clip(clip(2, true)),
+        ];
+        assert_eq!(default_selection(&rows), Some(1));
+    }
+
+    #[test]
+    fn default_selection_is_empty_without_clips() {
+        assert_eq!(default_selection(&[]), None);
+    }
 }
