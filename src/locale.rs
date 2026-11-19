@@ -49,11 +49,10 @@ pub fn current(store: Option<&Store>) -> Choice {
         .unwrap_or(Choice::System)
 }
 
-/// 应用当前语言：界面文案、托盘与窗口标题都跟着换。
+/// 应用当前语言。托盘与窗口标题不在这里重装：`set_tray` 的回调绑在调用它的
+/// owner 上，必须由 App 组件的 effect 触发，否则设置视图一重建菜单就失效。
 pub fn apply(store: Option<&Store>) {
     set_locale(current(store).locale());
-    crate::install_tray();
-    crate::refresh_titles();
 }
 
 pub fn set(store: Option<&Store>, choice: Choice) {

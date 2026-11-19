@@ -49,6 +49,15 @@ pub fn App() -> impl IntoElement {
     crate::clipboard::start_collector();
     setup_system();
     open_panel_once();
+    // ⌘, 在任何窗口（或面板收起时）都能打开设置。
+    on_key("mod+,", |_| open_settings());
+
+    // 托盘与窗口标题跟着语言走：effect 读到的 t! 让它随 set_locale 重跑，
+    // 而 owner 是 App，菜单回调不会随某个窗口一起失效。
+    effect(move || {
+        install_tray();
+        refresh_titles();
+    });
 
     // 宿主窗口只负责让引擎跑起来，马上藏起来；界面在面板窗口里。
     set_timeout(Duration::from_millis(0), || main_window().hide());

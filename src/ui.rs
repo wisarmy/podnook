@@ -1011,6 +1011,7 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
             crate::hide_panel();
         }
     });
+    // 面板自己的那份：设置窗口没开、主窗口不是 key 时也能用。
     on_key("mod+,", |_| crate::open_settings());
 }
 
