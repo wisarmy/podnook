@@ -14,26 +14,155 @@ use nsh_platform_macos::objc2_app_kit::{NSApplicationActivationPolicy, NSWorkspa
 
 use crate::{login_item, settings as prefs, theme};
 
+/// 设置窗口的状态：信号与元素引用跨重绘保留，语言切换只重建视图。
+#[derive(Clone)]
+struct SettingsState {
+    store: Option<std::sync::Arc<podnook_core::db::Store>>,
+    hotkey: Signal<String>,
+    recording: Signal<bool>,
+    success: Signal<Option<String>>,
+    count: Signal<i64>,
+    days: Signal<i64>,
+    auto_paste: Signal<bool>,
+    login: Signal<bool>,
+    login_label: Signal<String>,
+    ignored: Signal<Vec<String>>,
+    new_bundle: Signal<String>,
+    picker: Signal<bool>,
+    bundle_input: ElementRef,
+    notice: Signal<Option<String>>,
+    confirm_clear: Signal<bool>,
+    trusted: Signal<bool>,
+    language: Signal<crate::locale::Choice>,
+}
+
+impl SettingsState {
+    fn new(
+        store: Option<std::sync::Arc<podnook_core::db::Store>>,
+        config: &prefs::Settings,
+    ) -> Self {
+        let language = signal(crate::locale::current(store.as_deref()));
+        Self {
+            store,
+            hotkey: signal(config.hotkey.clone()),
+            recording: signal(false),
+            success: signal(None::<String>),
+            count: signal(config.retention_count),
+            days: signal(config.retention_days),
+            auto_paste: signal(config.auto_paste),
+            login: signal(login_item::status().is_on()),
+            login_label: signal(login_item::status().label().to_string()),
+            ignored: signal(config.ignored_bundles.clone()),
+            new_bundle: signal(String::new()),
+            picker: signal(false),
+            bundle_input: element_ref(),
+            notice: signal(None::<String>),
+            confirm_clear: signal(false),
+            trusted: signal(crate::paste::is_trusted()),
+            language,
+        }
+    }
+}
+
 pub fn settings() -> impl IntoElement {
     let store = crate::history::init();
     let config = prefs::load(store.as_deref());
-    let language_store = store.clone();
+    let state = SettingsState::new(store, &config);
+    start_polling(&state);
+    // Esc 收起设置而不是关窗：窗口与它的状态留着，下次打开直接复用。
+    on_key("escape", |_| crate::hide_settings());
+    dynamic(move || settings_ui(state.clone()))
+}
 
-    let hotkey = signal(config.hotkey.clone());
-    let recording = signal(false);
-    let success = signal(None::<String>);
-    let count = signal(config.retention_count);
-    let days = signal(config.retention_days);
-    let auto_paste = signal(config.auto_paste);
-    let login = signal(login_item::status().is_on());
-    let login_label = signal(login_item::status().label().to_string());
-    let ignored = signal(config.ignored_bundles.clone());
-    let new_bundle = signal(String::new());
-    let picker = signal(false);
-    let bundle_input = element_ref();
-    let notice = signal(None::<String>);
-    let confirm_clear = signal(false);
-    let trusted = signal(crate::paste::is_trusted());
+/// 一次性的轮询与清理；不随语言重绘重复注册。
+fn start_polling(state: &SettingsState) {
+    let store_for_poll = state.store.clone();
+    let recording = state.recording;
+    let hotkey = state.hotkey;
+    let success = state.success;
+    let notice = state.notice;
+    let trusted = state.trusted;
+
+    set_interval(std::time::Duration::from_millis(100), move || {
+        if !recording.get() {
+            return;
+        }
+        let Some(result) = crate::hotkey_recorder::take_result() else {
+            return;
+        };
+        recording.set(false);
+        match result {
+            Some(key) => {
+                let previous = hotkey.get();
+                let key_for_result = key.clone();
+                let previous_for_result = previous.clone();
+                let hotkey_signal = hotkey;
+                let success_signal = success;
+                let notice_signal = notice;
+                let store_for_result = store_for_poll.clone();
+                if !crate::register_hotkey_with(&key, move |ok| {
+                    if ok {
+                        hotkey_signal.set(key_for_result.clone());
+                        if let Some(store) = &store_for_result {
+                            prefs::write(store, SETTING_HOTKEY, &key_for_result);
+                        }
+                        success_signal.set(Some(key_for_result.clone()));
+                        let clear = success_signal;
+                        set_timeout(std::time::Duration::from_millis(1200), move || {
+                            clear.set(None)
+                        });
+                        show_notice(notice_signal, t!("notice.applied"));
+                    } else {
+                        hotkey_signal.set(previous_for_result.clone());
+                        crate::register_hotkey(&previous_for_result);
+                        success_signal.set(None);
+                    }
+                }) {
+                    crate::register_hotkey(&previous);
+                    show_notice(notice, t!("notice.invalid_hotkey"));
+                }
+            }
+            None => {
+                crate::register_hotkey(&hotkey.get());
+                show_notice(notice, t!("notice.cancelled"));
+            }
+        }
+    });
+
+    // 系统设置里已授权后，这里自动刷新。
+    set_interval(std::time::Duration::from_millis(1000), move || {
+        let now = crate::paste::is_trusted();
+        if trusted.get() != now {
+            trusted.set(now);
+        }
+    });
+    cleanup(move || {
+        crate::hotkey_recorder::cancel();
+        crate::register_hotkey(&hotkey.get());
+    });
+}
+
+fn settings_ui(state: SettingsState) -> View {
+    let SettingsState {
+        store,
+        hotkey,
+        recording,
+        success,
+        count,
+        days,
+        auto_paste,
+        login,
+        login_label,
+        ignored,
+        new_bundle,
+        picker,
+        bundle_input,
+        notice,
+        confirm_clear,
+        trusted,
+        language,
+    } = state;
+    let language_store = store.clone();
 
     // 呼出热键：点字段直接录制；录制提示用字段上方的浮层。
     let start_recording = move || {
@@ -148,65 +277,6 @@ pub fn settings() -> impl IntoElement {
             }
             popover
         }));
-
-    let store_for_poll = store.clone();
-    set_interval(std::time::Duration::from_millis(100), move || {
-        if !recording.get() {
-            return;
-        }
-        let Some(result) = crate::hotkey_recorder::take_result() else {
-            return;
-        };
-        recording.set(false);
-        match result {
-            Some(key) => {
-                let previous = hotkey.get();
-                let key_for_result = key.clone();
-                let previous_for_result = previous.clone();
-                let hotkey_signal = hotkey;
-                let success_signal = success;
-                let notice_signal = notice;
-                let store_for_result = store_for_poll.clone();
-                if !crate::register_hotkey_with(&key, move |ok| {
-                    if ok {
-                        hotkey_signal.set(key_for_result.clone());
-                        if let Some(store) = &store_for_result {
-                            prefs::write(store, SETTING_HOTKEY, &key_for_result);
-                        }
-                        success_signal.set(Some(key_for_result.clone()));
-                        let clear = success_signal;
-                        set_timeout(std::time::Duration::from_millis(1200), move || {
-                            clear.set(None)
-                        });
-                        show_notice(notice_signal, t!("notice.applied"));
-                    } else {
-                        hotkey_signal.set(previous_for_result.clone());
-                        crate::register_hotkey(&previous_for_result);
-                        success_signal.set(None);
-                    }
-                }) {
-                    crate::register_hotkey(&previous);
-                    show_notice(notice, t!("notice.invalid_hotkey"));
-                }
-            }
-            None => {
-                crate::register_hotkey(&hotkey.get());
-                show_notice(notice, t!("notice.cancelled"));
-            }
-        }
-    });
-
-    // 系统设置里已授权后，这里自动刷新。
-    set_interval(std::time::Duration::from_millis(1000), move || {
-        let now = crate::paste::is_trusted();
-        if trusted.get() != now {
-            trusted.set(now);
-        }
-    });
-    cleanup(move || {
-        crate::hotkey_recorder::cancel();
-        crate::register_hotkey(&hotkey.get());
-    });
 
     // 保留条数
     let mut count_row = view().flex_row().items_center().gap_2();
@@ -512,8 +582,7 @@ pub fn settings() -> impl IntoElement {
         .child(setting_row(t!("settings.keep_days"), days_row))
         .child(setting_row(t!("settings.clear"), clear_control));
 
-    let store_for_language = language_store;
-    let language = signal(crate::locale::current(store_for_language.as_deref()));
+    let store_for_language = language_store.clone();
     let mut language_row = view().flex_row().items_center().gap_2();
     for (value, label) in [
         (

@@ -61,5 +61,4 @@ pub fn set(store: Option<&Store>, choice: Choice) {
         settings::write(store, SETTING_LOCALE, choice.stored());
     }
     apply(store);
-    crate::rebuild_windows();
 }

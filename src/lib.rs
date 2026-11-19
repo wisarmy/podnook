@@ -206,34 +206,6 @@ pub fn refresh_titles() {    SETTINGS_WINDOW.with(|slot| {
     ui::refresh_editor_title();
 }
 
-/// 切换语言后重建窗口：已经构建好的静态文案不会自己跟着变。
-pub fn rebuild_windows() {
-    let settings_visible = SETTINGS_WINDOW.with(|slot| {
-        slot.borrow()
-            .as_ref()
-            .is_some_and(|window| window.state().is_some_and(|state| state.visible))
-    });
-    set_timeout(Duration::from_millis(0), move || {
-        SETTINGS_WINDOW.with(|slot| {
-            if let Some(window) = slot.borrow_mut().take() {
-                window.close();
-            }
-        });
-        PANEL.with(|slot| {
-            if let Some(window) = slot.borrow_mut().take() {
-                window.close();
-            }
-        });
-        ui::forget_state();
-        open_panel_once();
-        hide_panel();
-        if settings_visible {
-            open_settings();
-        }
-    });
-}
-
-
 /// 录制热键前先注销，避免按下旧组合键时面板被呼出。
 pub fn suspend_hotkey() {
     if matches!(os(), Os::MacOs) {
@@ -298,7 +270,7 @@ pub fn open_settings() {
     attributes.activate = Some(false);
     attributes.focusable = Some(true);
     attributes.resizable = Some(false);
-    attributes.close_on_escape = Some(true);
+    attributes.close_on_escape = Some(false);
     attributes.transparent = Some(true);
     attributes.level = Some(WindowLevel::Floating);
     attributes.workspaces = Some(Workspaces::All);

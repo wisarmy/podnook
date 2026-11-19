@@ -204,12 +204,6 @@ pub fn shell() -> impl IntoElement {
     dynamic(move || shell_view(state.clone()))
 }
 
-/// 窗口重建前丢掉旧的界面状态，避免呼出时操作到已销毁的信号。
-pub fn forget_state() {
-    STATE.with(|slot| *slot.borrow_mut() = None);
-    SEARCH.with(|slot| *slot.borrow_mut() = None);
-}
-
 pub fn glass_backdrop() -> MacOsBackdrop {
     let mut backdrop = MacOsBackdrop::default();
     backdrop.blending = MacOsBackdropBlending::BehindWindow;
