@@ -13,7 +13,7 @@ Product context and decisions live in [`CONTEXT.md`](CONTEXT.md); architecture d
 
 ## Status
 
-v0.1 (M4 packaged). What works today: menu-bar app without a Dock icon; a global
+v0.2 (M4 packaged). What works today: menu-bar app without a Dock icon; a global
 ⌘⇧V hotkey opens a frameless panel (it covers other apps' full-screen spaces;
 closes on blur or Esc); background clipboard capture (text / image / files /
 links), de-duplication, privacy-marker filtering, SQLite persistence; search,
@@ -158,7 +158,7 @@ See [`LICENSE`](LICENSE).
 
 本地优先、开源的 macOS **剪贴板历史**工具。复制过的一切留在本机，一个快捷键召回、搜索、粘回，绝不上传。
 
-界面提供英文与简体中文：默认跟随系统语言，可在设置里切换。
+界面提供英文与简体中文：默认跟随系统语言，可在设置里切换。v0.2 起发布包与截图都是中英双语。
 
 ## 安装
 
