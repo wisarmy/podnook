@@ -80,7 +80,7 @@ make screenshot                      # regenerate docs/images/*.png
 
 Get the DMG for your architecture from [GitHub Releases](https://github.com/wisarmy/podnook/releases):
 
-- `Podnook-<version>-arm64.dmg`: Apple Silicon (M1/M2/M3/M4)
+- `Podnook-<version>-arm64.dmg`: Apple Silicon
 - `Podnook-<version>-x86_64.dmg`: Intel Mac
 
 Open the DMG and drag Podnook into Applications.
@@ -166,7 +166,7 @@ See [`LICENSE`](LICENSE).
 
 从 [GitHub Releases](https://github.com/wisarmy/podnook/releases) 下载对应架构的 DMG：
 
-- `Podnook-<version>-arm64.dmg`：Apple Silicon（M1/M2/M3/M4）
+- `Podnook-<version>-arm64.dmg`：Apple Silicon
 - `Podnook-<version>-x86_64.dmg`：Intel Mac
 
 打开 DMG，把 Podnook 拖进 Applications。
