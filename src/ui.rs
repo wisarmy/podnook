@@ -47,6 +47,18 @@ fn row_ref(id: i64) -> ElementRef {
     ROW_REFS.with(|refs| *refs.borrow_mut().entry(id).or_insert_with(element_ref))
 }
 
+/// 选中某条并把它带进视野（Rolling 到起点对齐：首行即顶部）。
+fn select_and_reveal(state: &State, id: Option<i64>) {
+    state.selected.set(id);
+    let Some(id) = id else {
+        return;
+    };
+    let row = row_ref(id);
+    set_timeout(Duration::from_millis(0), move || {
+        row.reveal(RevealOptions::default())
+    });
+}
+
 /// Esc 收起面板：下次呼出清空搜索并回到最新一条。
 pub fn reset_on_next_show() {
     RESET_ON_SHOW.with(|flag| flag.set(true));
@@ -190,10 +202,7 @@ pub fn shell() -> impl IntoElement {
             Some(id) => Some(id),
         };
         if next != sel.selected.get() {
-            sel.selected.set(next);
-            if let Some(id) = next {
-                row_ref(id).reveal(RevealOptions::default());
-            }
+            select_and_reveal(&sel, next);
         }
     });
 
@@ -1333,7 +1342,8 @@ fn run_action(state: &State, store: Option<&Store>, kind: ActionKind) {
                 Ok(count) => {
                     crate::history::bump();
                     reload(state, store);
-                    state.selected.set(default_selection(&state.rows.get()));
+                    let next = default_selection(&state.rows.get());
+                    select_and_reveal(state, next);
                     close_actions(state);
                     flash(
                         state,
@@ -1355,7 +1365,8 @@ fn run_action(state: &State, store: Option<&Store>, kind: ActionKind) {
                 Ok(count) => {
                     crate::history::bump();
                     reload(state, store);
-                    state.selected.set(default_selection(&state.rows.get()));
+                    let next = default_selection(&state.rows.get());
+                    select_and_reveal(state, next);
                     close_actions(state);
                     flash(state, t!("flash.cleared", count = count));
                 }
@@ -1503,9 +1514,8 @@ fn delete_selected(state: &State, store: Option<&Store>) {
     crate::history::bump();
     reload(state, store);
     let rows = state.rows.get();
-    state
-        .selected
-        .set(selection_after_delete(&previous_rows, &rows, clip.id));
+    let next = selection_after_delete(&previous_rows, &rows, clip.id);
+    select_and_reveal(state, next);
     flash(state, t!("flash.deleted"));
 }
 

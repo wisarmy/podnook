@@ -59,9 +59,9 @@ pub fn App() -> impl IntoElement {
         refresh_titles();
     });
 
-    // 宿主窗口只负责让引擎跑起来，马上藏起来；界面在面板窗口里。
+    // 宿主窗口只负责让引擎跑起来，马上藏起来；界面只在面板窗口里渲染一份。
     set_timeout(Duration::from_millis(0), || main_window().hide());
-    ui::shell()
+    view()
 }
 
 fn panel_attributes() -> WindowAttributes {
