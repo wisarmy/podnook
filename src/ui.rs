@@ -36,8 +36,15 @@ thread_local! {
     static STATE: std::cell::RefCell<Option<State>> = const { std::cell::RefCell::new(None) };
     /// 编辑内容窗口。
     static EDITOR: std::cell::RefCell<Option<WindowRef>> = const { std::cell::RefCell::new(None) };
+    /// 历史列表每一行的 ref：选中项变化时把它滚进视野。
+    static ROW_REFS: std::cell::RefCell<std::collections::HashMap<i64, ElementRef>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
     /// 下次呼出是否回到默认选中：只有 Esc 收起时才重置，点别处消失则保留。
     static RESET_ON_SHOW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn row_ref(id: i64) -> ElementRef {
+    ROW_REFS.with(|refs| *refs.borrow_mut().entry(id).or_insert_with(element_ref))
 }
 
 /// Esc 收起面板：下次呼出清空搜索并回到最新一条。
@@ -176,11 +183,17 @@ pub fn shell() -> impl IntoElement {
     effect(move || {
         let rows = sel.rows.get();
         let ids = visible_ids(&rows);
-        match sel.selected.get() {
+        let next = match sel.selected.get() {
             // 呼出或首次加载：默认落在最新的未固定条目（Raycast 行为）。
-            None => sel.selected.set(default_selection(&rows)),
-            Some(id) if !ids.contains(&id) => sel.selected.set(ids.first().copied()),
-            _ => {}
+            None => default_selection(&rows),
+            Some(id) if !ids.contains(&id) => ids.first().copied(),
+            Some(id) => Some(id),
+        };
+        if next != sel.selected.get() {
+            sel.selected.set(next);
+            if let Some(id) = next {
+                row_ref(id).reveal(RevealOptions::default());
+            }
         }
     });
 
@@ -1653,6 +1666,7 @@ fn sidebar(state: State) -> impl IntoElement {
                             let id = clip.id;
                             let row_state = state.clone();
                             view()
+                                .element_ref(&row_ref(id))
                                 .flex_row()
                                 .items_center()
                                 .gap_3()
