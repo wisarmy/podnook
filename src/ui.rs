@@ -667,6 +667,7 @@ fn actions_overlay_inner(state: State) -> View {
         .absolute()
         .inset(px(0.0))
         .z_index(40)
+        .pointer_events(PointerEvents::BoxNone)
         .child(
             view()
                 .absolute()
@@ -1726,6 +1727,13 @@ fn sidebar(state: State) -> impl IntoElement {
                                         if let Some(store) = crate::history::init() {
                                             activate_selected(&row_state, Some(store.as_ref()), true);
                                         }
+                                    }
+                                })
+                                .on_context_menu({
+                                    let menu_state = state.clone();
+                                    move |_event: &nsh_core::ContextMenuEvent| {
+                                        selected.set(Some(id));
+                                        enter_action_mode(&menu_state, ActionMode::Main);
                                     }
                                 })
                                 .child(icon_box(&clip))
