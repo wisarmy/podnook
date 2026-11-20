@@ -658,6 +658,7 @@ fn actions_overlay_inner(state: State) -> View {
     };
 
     let backdrop_state = state.clone();
+    let backdrop_menu_state = state.clone();
     let search_ref = state.actions_search;
     let query = state.actions_query;
     let change_state = state.clone();
@@ -676,7 +677,10 @@ fn actions_overlay_inner(state: State) -> View {
                 .right(px(0.0))
                 .bottom(px(44.0))
                 .bg(theme::bg().opacity(0.01))
-                .on_press(move || close_actions(&backdrop_state)),
+                .on_press(move || close_actions(&backdrop_state))
+                .on_context_menu(move |_event: &nsh_core::ContextMenuEvent| {
+                    close_actions(&backdrop_menu_state)
+                }),
         )
         .child(
             view()
