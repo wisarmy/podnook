@@ -59,6 +59,13 @@ def main() -> None:
         );
         CREATE INDEX clips_order ON clips(pinned DESC, last_copied_at DESC);
         CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE snippets (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL, content TEXT NOT NULL,
+          keyword TEXT NOT NULL DEFAULT '',
+          created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+          last_used_at INTEGER NOT NULL DEFAULT 0
+        );
         """
     )
 
@@ -201,6 +208,36 @@ def main() -> None:
         copy_count=3,
     )
 
+    conn.executemany(
+        "INSERT INTO snippets (name, content, keyword, created_at, updated_at, last_used_at)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        [
+            (
+                "Signature",
+                "Best regards,\nWisarmy",
+                "sig",
+                created,
+                now - 30,
+                now - 5,
+            ),
+            (
+                "Standup note",
+                "- shipped snippets\n- review the showcase PR\n- {date}",
+                "",
+                created,
+                now - 60,
+                now - 10,
+            ),
+            (
+                "Support reply",
+                "Thanks for the report. Could you share your macOS version?",
+                "",
+                created,
+                now - 90,
+                now - 20,
+            ),
+        ],
+    )
     conn.executemany(
         "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
         [

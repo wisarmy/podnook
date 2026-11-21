@@ -8,6 +8,10 @@ tray:
   settings: "设置…"
   quit: "退出"
 
+source:
+  history: "历史"
+  snippets: "片段"
+
 kind:
   text: "文本"
   link: "链接"
@@ -24,6 +28,9 @@ group:
 
 panel:
   search: "搜索剪贴板历史…"
+  search_snippets: "搜索片段…"
+  snippets_count: "片段 · %{count} 个"
+  empty_snippets: "还没有片段，按 ⌘S 新建"
   actions: "操作"
   empty: "复制点什么，就会出现在这里"
   history_count: "剪贴板历史 · %{count} 条"
@@ -36,6 +43,7 @@ panel:
 
 editor:
   title: "编辑内容"
+  body: "片段内容"
   hint: "保存后更新这条历史记录"
   duplicate: "保存失败：内容为空，或与已有条目重复"
   cancel: "取消"
@@ -56,6 +64,8 @@ action:
   open_link: "打开链接"
   open_file: "打开文件"
   reveal: "在 Finder 中显示"
+  save_snippet: "保存为片段…"
+  new_snippet: "新建片段…"
 
 range:
   m5: "5 分钟"
@@ -169,3 +179,10 @@ notice:
   removed: "已移除"
   already_listed: "已经在列表里"
   added: "已添加 %{bundle}"
+
+snippet:
+  title: "片段"
+  name: "名称"
+  hint: "占位符：{date}、{time}、{datetime}"
+  empty: "片段内容不能为空"
+  failed: "保存片段失败"

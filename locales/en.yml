@@ -8,6 +8,10 @@ tray:
   settings: "Settings…"
   quit: "Quit"
 
+source:
+  history: "History"
+  snippets: "Snippets"
+
 kind:
   text: "Text"
   link: "Link"
@@ -24,6 +28,9 @@ group:
 
 panel:
   search: "Search clipboard history…"
+  search_snippets: "Search snippets…"
+  snippets_count: "Snippets · %{count}"
+  empty_snippets: "No snippets yet. Press ⌘S to create one."
   actions: "Actions"
   empty: "Copy something and it will show up here."
   history_count: "Clipboard history · %{count} items"
@@ -36,6 +43,7 @@ panel:
 
 editor:
   title: "Edit content"
+  body: "Snippet text"
   hint: "Saving updates this history entry"
   duplicate: "Cannot save: the content is empty or duplicates another entry"
   cancel: "Cancel"
@@ -56,6 +64,8 @@ action:
   open_link: "Open link"
   open_file: "Open file"
   reveal: "Reveal in Finder"
+  save_snippet: "Save as snippet…"
+  new_snippet: "New snippet…"
 
 range:
   m5: "5 minutes"
@@ -169,3 +179,10 @@ notice:
   removed: "Removed"
   already_listed: "Already in the list"
   added: "Added %{bundle}"
+
+snippet:
+  title: "Snippet"
+  name: "Name"
+  hint: "Placeholders: {date}, {time}, {datetime}"
+  empty: "The snippet cannot be empty"
+  failed: "Could not save the snippet"

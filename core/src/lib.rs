@@ -142,6 +142,19 @@ pub struct Clip {
     pub copy_count: i64,
 }
 
+/// 片段库里的一条：可复用的文本，独立于剪贴板历史与保留期。
+#[derive(Debug, Clone, PartialEq)]
+pub struct Snippet {
+    pub id: i64,
+    pub name: String,
+    pub content: String,
+    /// 搜索别名；v1 不做全局展开。
+    pub keyword: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub last_used_at: i64,
+}
+
 /// 当前 Unix 时间（秒）。
 pub fn now_secs() -> i64 {
     SystemTime::now()

@@ -13,7 +13,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::{
     hash_bytes, hash_text, kind_for_text, preview_for_text, truncate_text, Clip, ClipKind, NewClip,
-    Snapshot, IMAGE_LIMIT, RETENTION_COUNT, RETENTION_DAYS, SETTING_IGNORED_BUNDLES,
+    Snippet, Snapshot, IMAGE_LIMIT, RETENTION_COUNT, RETENTION_DAYS, SETTING_IGNORED_BUNDLES,
     SETTING_RETENTION_COUNT, SETTING_RETENTION_DAYS, TEXT_LIMIT,
 };
 
@@ -44,6 +44,16 @@ CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS snippets (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  name         TEXT    NOT NULL,
+  content      TEXT    NOT NULL,
+  keyword      TEXT    NOT NULL DEFAULT '',
+  created_at   INTEGER NOT NULL,
+  updated_at   INTEGER NOT NULL,
+  last_used_at INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS snippets_used ON snippets(last_used_at DESC, created_at DESC);
 "#;
 
 /// 写入结果：新条目，还是把已有条目置顶。
@@ -527,6 +537,80 @@ impl Store {
     }
 }
 
+impl Store {
+    /// 片段库，最近使用的在前。
+    pub fn list_snippets(&self) -> rusqlite::Result<Vec<Snippet>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, content, keyword, created_at, updated_at, last_used_at
+               FROM snippets
+              ORDER BY last_used_at DESC, created_at DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(Snippet {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                content: row.get(2)?,
+                keyword: row.get(3)?,
+                created_at: row.get(4)?,
+                updated_at: row.get(5)?,
+                last_used_at: row.get(6)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn create_snippet(
+        &self,
+        name: &str,
+        content: &str,
+        keyword: &str,
+        now: i64,
+    ) -> rusqlite::Result<i64> {
+        let conn = self.lock();
+        conn.execute(
+            "INSERT INTO snippets (name, content, keyword, created_at, updated_at, last_used_at)
+             VALUES (?1, ?2, ?3, ?4, ?4, 0)",
+            params![name, content, keyword, now],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn update_snippet(
+        &self,
+        id: i64,
+        name: &str,
+        content: &str,
+        keyword: &str,
+        now: i64,
+    ) -> rusqlite::Result<()> {
+        let conn = self.lock();
+        conn.execute(
+            "UPDATE snippets
+                SET name = ?1, content = ?2, keyword = ?3, updated_at = ?4
+              WHERE id = ?5",
+            params![name, content, keyword, now, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_snippet(&self, id: i64) -> rusqlite::Result<()> {
+        let conn = self.lock();
+        conn.execute("DELETE FROM snippets WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    /// 粘贴/复制后置顶（按最近使用排序）。
+    pub fn touch_snippet(&self, id: i64, now: i64) -> rusqlite::Result<()> {
+        let conn = self.lock();
+        conn.execute(
+            "UPDATE snippets SET last_used_at = ?1 WHERE id = ?2",
+            params![now, id],
+        )?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -831,5 +915,53 @@ mod tests {
         assert_eq!(rows.last().unwrap().preview, "clip 5");
         // 再 prune 一次是幂等的。
         assert_eq!(store.prune(RETENTION_COUNT + 5).unwrap(), 0);
+    }
+}
+
+#[cfg(test)]
+mod snippet_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn store() -> Store {
+        let dir = std::env::temp_dir().join(format!(
+            "podnook-snippets-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        Store::open_in_memory(dir).unwrap()
+    }
+
+    #[test]
+    fn snippets_list_recently_used_first() {
+        let store = store();
+        let first = store.create_snippet("签名", "Best regards", "", 10).unwrap();
+        let second = store.create_snippet("地址", "Shanghai", "addr", 20).unwrap();
+
+        let list = store.list_snippets().unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].id, second);
+        assert_eq!(list[0].keyword, "addr");
+
+        store.touch_snippet(first, 30).unwrap();
+        assert_eq!(store.list_snippets().unwrap()[0].id, first);
+    }
+
+    #[test]
+    fn snippets_update_and_delete() {
+        let store = store();
+        let id = store.create_snippet("签名", "Best", "", 10).unwrap();
+
+        store.update_snippet(id, "签名", "Regards", "sig", 40).unwrap();
+        let saved = store.list_snippets().unwrap().remove(0);
+        assert_eq!(saved.name, "签名");
+        assert_eq!(saved.content, "Regards");
+        assert_eq!(saved.keyword, "sig");
+        assert_eq!(saved.updated_at, 40);
+
+        store.delete_snippet(id).unwrap();
+        assert!(store.list_snippets().unwrap().is_empty());
     }
 }

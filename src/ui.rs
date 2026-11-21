@@ -6,6 +6,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -22,7 +23,9 @@ use nsh_core::{
     platform::HourCycle,
 };
 use podnook_core::db::Store;
-use podnook_core::{hash_text, now_secs, Clip, ClipKind, SETTING_AUTO_PASTE};
+use podnook_core::{
+    hash_text, now_secs, preview_for_text, Clip, ClipKind, Snippet, SETTING_AUTO_PASTE,
+};
 
 use crate::theme;
 
@@ -36,6 +39,10 @@ thread_local! {
     static STATE: std::cell::RefCell<Option<State>> = const { std::cell::RefCell::new(None) };
     /// 编辑内容窗口。
     static EDITOR: std::cell::RefCell<Option<WindowRef>> = const { std::cell::RefCell::new(None) };
+    /// 片段编辑窗口。
+    static SNIPPET_EDITOR: std::cell::RefCell<Option<WindowRef>> = const { std::cell::RefCell::new(None) };
+    /// 片段编辑器每次打开用新 id：关掉的窗口在 NSH 里仍占着旧 id。
+    static SNIPPET_SEQ: AtomicU64 = AtomicU64::new(0);
     /// 历史列表的滚动容器：删掉最后一条时把滚动条真正拉回顶部。
     static SIDEBAR: std::cell::RefCell<Option<ElementRef>> = const { std::cell::RefCell::new(None) };
     /// 历史列表每一行的 ref：选中项变化时把它滚进视野。
@@ -106,6 +113,8 @@ pub fn prepare_for_show() {
 #[derive(Clone)]
 struct State {
     clips: Signal<Vec<Clip>>,
+    snippets: Signal<Vec<Snippet>>,
+    source: Signal<Source>,
     query: Signal<String>,
     filter: Signal<Option<ClipKind>>,
     selected: Signal<Option<i64>>,
@@ -125,6 +134,14 @@ struct State {
 enum Row {
     Section(String),
     Clip(Clip),
+    Snippet(Snippet),
+}
+
+/// 面板当前浏览的来源。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Source {
+    History,
+    Snippets,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -151,6 +168,8 @@ enum ActionKind {
     DeleteRange(i64),
     Back,
     ConfirmDeleteAll,
+    SaveSnippet,
+    NewSnippet,
 }
 
 #[derive(Clone)]
@@ -175,17 +194,29 @@ fn delete_ranges() -> Vec<(i64, String)> {
 /// 整个应用的骨架。
 pub fn shell() -> impl IntoElement {
     let clips = signal(Vec::<Clip>::new());
+    let snippets = signal(Vec::<Snippet>::new());
+    let source = signal(Source::History);
     let query = signal(String::new());
     let filter = signal(None::<ClipKind>);
     let selected = signal(None::<i64>);
     let flash = signal(None::<String>);
-    let rows = computed(move || build_rows(&clips.get(), &query.get(), filter.get()));
+    let rows = computed(move || {
+        build_rows(
+            &clips.get(),
+            &snippets.get(),
+            source.get(),
+            &query.get(),
+            filter.get(),
+        )
+    });
     let search = element_ref();
     let actions_search = element_ref();
     let save_input = element_ref();
     SEARCH.with(|slot| *slot.borrow_mut() = Some(search));
     let state = State {
         clips,
+        snippets,
+        source,
         query,
         filter,
         selected,
@@ -326,6 +357,176 @@ pub fn refresh_editor_title() {
             window.set(attributes);
         }
     });
+}
+
+/// 打开片段编辑器：`existing` 为 `Some` 时编辑，`content` 为预填正文。
+pub fn open_snippet_editor(existing: Option<Snippet>, content: Option<String>) {
+    close_snippet_editor();
+    let mut attributes = WindowAttributes::default();
+    attributes.activate = Some(false);
+    attributes.focusable = Some(true);
+    attributes.resizable = Some(true);
+    attributes.close_on_escape = Some(true);
+    attributes.transparent = Some(true);
+    attributes.level = Some(WindowLevel::Floating);
+    attributes.workspaces = Some(Workspaces::All);
+    let id = format!(
+        "snippet-editor-{}",
+        SNIPPET_SEQ.with(|seq| seq.fetch_add(1, Ordering::Relaxed))
+    );
+    let window = panel_window()
+        .id(id)
+        .kind(WindowKind::Panel)
+        .title(t!("snippet.title"))
+        .default_size(size(px(560.0), px(420.0)))
+        .attributes(attributes)
+        .content(move || edit_snippet(existing.clone(), content.clone()));
+    if let Some(window) = open_window(window) {
+        window.focus();
+        let refocus = window.clone();
+        set_timeout(Duration::from_millis(150), move || refocus.focus());
+        SNIPPET_EDITOR.with(|slot| *slot.borrow_mut() = Some(window));
+    }
+}
+
+fn close_snippet_editor() {
+    SNIPPET_EDITOR.with(|slot| {
+        if let Some(window) = slot.borrow_mut().take() {
+            if window.state().is_some() {
+                window.close();
+            }
+        }
+    });
+}
+
+fn edit_snippet(existing: Option<Snippet>, content: Option<String>) -> impl IntoElement {
+    let store = crate::history::init();
+    let snippet_id = existing.as_ref().map(|snippet| snippet.id);
+    let name = signal(
+        existing
+            .as_ref()
+            .map(|snippet| snippet.name.clone())
+            .unwrap_or_default(),
+    );
+    let body = signal(
+        content
+            .or_else(|| existing.as_ref().map(|snippet| snippet.content.clone()))
+            .unwrap_or_default(),
+    );
+    let keyword = signal(
+        existing
+            .as_ref()
+            .map(|snippet| snippet.keyword.clone())
+            .unwrap_or_default(),
+    );
+    let notice = signal(None::<String>);
+
+    let save_store = store.clone();
+    let save = move || {
+        let Some(store) = save_store.as_deref() else {
+            return;
+        };
+        let text = body.get();
+        if text.trim().is_empty() {
+            notice.set(Some(t!("snippet.empty")));
+            return;
+        }
+        let title = name.get();
+        let title = if title.trim().is_empty() {
+            preview_for_text(&text)
+        } else {
+            title.trim().to_string()
+        };
+        let alias = keyword.get();
+        let now = now_secs();
+        let result = match snippet_id {
+            Some(id) => store.update_snippet(id, &title, &text, &alias, now),
+            None => store
+                .create_snippet(&title, &text, &alias, now)
+                .map(|_| ()),
+        };
+        match result {
+            Ok(()) => {
+                crate::history::bump();
+                crate::show_panel();
+                close_snippet_editor();
+            }
+            Err(e) => {
+                log::error!("save snippet: {e}");
+                notice.set(Some(t!("snippet.failed")));
+            }
+        }
+    };
+    let cancel = || {
+        crate::show_panel();
+        close_snippet_editor();
+    };
+
+    view()
+        .flex_1()
+        .flex_col()
+        .macos_backdrop(glass_backdrop())
+        .bg(theme::glass_bg())
+        .text_color(theme::fg())
+        .p_4()
+        .gap_3()
+        .child(
+            text(t!("snippet.title"))
+                .text_size(px(13.0))
+                .text_color(theme::muted_fg()),
+        )
+        .child(
+            input()
+                .test_id("snippet-name")
+                .value(name)
+                .on_change(move |value: &str| name.set(value.to_string()))
+                .placeholder(t!("snippet.name"))
+                .text_size(px(13.0))
+                .auto_focus(true),
+        )
+        .child(
+            view()
+                .flex_1()
+                .flex_col()
+                .rounded(px(8.0))
+                .bg(theme::glass_card())
+                .border_1()
+                .border_color(theme::border())
+                .p_3()
+                .child(
+                    input()
+                        .test_id("snippet-body")
+                        .multiline(true)
+                        .flex_1()
+                        .placeholder(t!("snippet.body"))
+                        .value(body)
+                        .on_change(move |value: &str| body.set(value.to_string()))
+                        .text_size(px(13.0))
+                        .text_color(theme::fg()),
+                ),
+        )
+        .child(
+            text(t!("snippet.hint"))
+                .text_size(px(11.0))
+                .text_color(theme::muted_fg()),
+        )
+        .child(dynamic(move || {
+            if let Some(message) = notice.get() {
+                text(message)
+                    .text_size(px(11.0))
+                    .text_color(theme::danger())
+            } else {
+                text("").text_size(px(11.0))
+            }
+        }))
+        .child(
+            view()
+                .flex_row()
+                .justify_end()
+                .gap_2()
+                .child(editor_button(t!("editor.cancel"), false, cancel))
+                .child(editor_button(t!("editor.save"), true, save)),
+        )
 }
 
 fn edit_content(clip: Clip) -> impl IntoElement {
@@ -777,6 +978,10 @@ fn reload(state: &State, store: &Store) {
         Ok(clips) => state.clips.set(clips),
         Err(e) => log::error!("list history: {e}"),
     }
+    match store.list_snippets() {
+        Ok(snippets) => state.snippets.set(snippets),
+        Err(e) => log::error!("list snippets: {e}"),
+    }
 }
 
 fn selected_clip(state: &State) -> Option<Clip> {
@@ -788,6 +993,7 @@ fn visible_ids(rows: &[Row]) -> Vec<i64> {
     rows.iter()
         .filter_map(|row| match row {
             Row::Clip(clip) => Some(clip.id),
+            Row::Snippet(snippet) => Some(snippet.id),
             Row::Section(_) => None,
         })
         .collect()
@@ -797,19 +1003,38 @@ fn visible_ids(rows: &[Row]) -> Vec<i64> {
 fn default_selection(rows: &[Row]) -> Option<i64> {
     let mut first = None;
     for row in rows {
-        let Row::Clip(clip) = row else {
-            continue;
+        let id = match row {
+            Row::Clip(clip) => {
+                first.get_or_insert(clip.id);
+                if !clip.pinned {
+                    return Some(clip.id);
+                }
+                clip.id
+            }
+            Row::Snippet(snippet) => snippet.id,
+            Row::Section(_) => continue,
         };
-        first.get_or_insert(clip.id);
-        if !clip.pinned {
-            return Some(clip.id);
-        }
+        first.get_or_insert(id);
     }
     first
 }
 
-fn build_rows(clips: &[Clip], query: &str, filter: Option<ClipKind>) -> Vec<Row> {
+fn build_rows(
+    clips: &[Clip],
+    snippets: &[Snippet],
+    source: Source,
+    query: &str,
+    filter: Option<ClipKind>,
+) -> Vec<Row> {
     let q = query.trim().to_lowercase();
+    if source == Source::Snippets {
+        return snippets
+            .iter()
+            .filter(|snippet| q.is_empty() || snippet_matches(snippet, &q))
+            .cloned()
+            .map(Row::Snippet)
+            .collect();
+    }
     let today = local_today();
     let mut pinned = Vec::new();
     let mut today_rows = Vec::new();
@@ -836,6 +1061,12 @@ fn build_rows(clips: &[Clip], query: &str, filter: Option<ClipKind>) -> Vec<Row>
     push_group(&mut rows, t!("group.today"), today_rows);
     push_group(&mut rows, t!("group.earlier"), older);
     rows
+}
+
+fn snippet_matches(snippet: &Snippet, q: &str) -> bool {
+    snippet.name.to_lowercase().contains(q)
+        || snippet.content.to_lowercase().contains(q)
+        || snippet.keyword.to_lowercase().contains(q)
 }
 
 fn push_group(rows: &mut Vec<Row>, label: String, group: Vec<Clip>) {
@@ -1085,7 +1316,35 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
         }
     });
     // 面板自己的那份：设置窗口没开、主窗口不是 key 时也能用。
+    // ⌘S：历史里把选中条目存成片段；片段模式下新建。
+    let save_state = state.clone();
+    on_key("mod+s", move |_| {
+        if save_state.source.get() == Source::Snippets {
+            open_snippet_editor(None, None);
+        } else {
+            let content = selected_clip(&save_state)
+                .and_then(|clip| clip.content)
+                .unwrap_or_default();
+            open_snippet_editor(None, Some(content));
+        }
+    });
+
+    let source_1 = state.clone();
+    on_key("mod+1", move |_| switch_source(&source_1, Source::History));
+    let source_2 = state.clone();
+    on_key("mod+2", move |_| switch_source(&source_2, Source::Snippets));
+
     on_key("mod+,", |_| crate::open_settings());
+}
+
+fn switch_source(state: &State, source: Source) {
+    if state.source.get() == source {
+        return;
+    }
+    state.source.set(source);
+    state.query.set(String::new());
+    state.filter.set(None);
+    state.selected.set(None);
 }
 
 fn enter_action_mode(state: &State, mode: ActionMode) {
@@ -1143,6 +1402,46 @@ fn move_action(state: &State, delta: isize) {
 }
 
 fn action_items(state: &State) -> Vec<ActionItem> {
+    if state.source.get() == Source::Snippets {
+        let mut items = vec![
+            ActionItem {
+                kind: ActionKind::Paste,
+                label: t!("action.paste"),
+                shortcut: "enter",
+                destructive: false,
+            },
+            ActionItem {
+                kind: ActionKind::Copy,
+                label: t!("action.copy"),
+                shortcut: "mod+enter",
+                destructive: false,
+            },
+            ActionItem {
+                kind: ActionKind::Edit,
+                label: t!("action.edit"),
+                shortcut: "mod+e",
+                destructive: false,
+            },
+            ActionItem {
+                kind: ActionKind::NewSnippet,
+                label: t!("action.new_snippet"),
+                shortcut: "mod+s",
+                destructive: false,
+            },
+            ActionItem {
+                kind: ActionKind::Delete,
+                label: t!("action.delete"),
+                shortcut: "ctrl+x",
+                destructive: true,
+            },
+        ];
+        let query = state.actions_query.get().trim().to_lowercase();
+        if !query.is_empty() {
+            items.retain(|item| item.label.to_lowercase().contains(&query));
+        }
+        return items;
+    }
+
     let pin_label = match selected_clip(state) {
         Some(clip) if clip.pinned => t!("action.unpin"),
         _ => t!("action.pin"),
@@ -1220,6 +1519,12 @@ fn action_items(state: &State) -> Vec<ActionItem> {
                 kind: ActionKind::SaveFile,
                 label: t!("action.save_file"),
                 shortcut: "alt+shift+mod+s",
+                destructive: false,
+            },
+            ActionItem {
+                kind: ActionKind::SaveSnippet,
+                label: t!("action.save_snippet"),
+                shortcut: "mod+s",
                 destructive: false,
             },
             ActionItem {
@@ -1315,6 +1620,13 @@ fn run_action(state: &State, store: Option<&Store>, kind: ActionKind) {
             activate_selected(state, store, false);
         }
         ActionKind::Edit => {
+            if state.source.get() == Source::Snippets {
+                if let Some(snippet) = selected_snippet(state) {
+                    state.actions_open.set(false);
+                    open_snippet_editor(Some(snippet), None);
+                }
+                return;
+            }
             if let Some(clip) = selected_clip(state) {
                 if matches!(clip.kind, ClipKind::Text | ClipKind::Link) {
                     state.actions_open.set(false);
@@ -1345,6 +1657,17 @@ fn run_action(state: &State, store: Option<&Store>, kind: ActionKind) {
         ActionKind::Delete => {
             delete_selected(state, store);
             close_actions(state);
+        }
+        ActionKind::SaveSnippet => {
+            let content = selected_clip(state)
+                .and_then(|clip| clip.content)
+                .unwrap_or_default();
+            close_actions(state);
+            open_snippet_editor(None, Some(content));
+        }
+        ActionKind::NewSnippet => {
+            close_actions(state);
+            open_snippet_editor(None, None);
         }
         ActionKind::DeleteEntries => enter_action_mode(state, ActionMode::Range),
         ActionKind::DeleteAll => enter_action_mode(state, ActionMode::ConfirmAll),
@@ -1423,6 +1746,10 @@ fn move_selection(state: &State, delta: isize) {
 }
 
 fn activate_selected(state: &State, store: Option<&Store>, paste: bool) {
+    if state.source.get() == Source::Snippets {
+        activate_snippet(state, store, paste);
+        return;
+    }
     let Some(clip) = selected_clip(state) else {
         return;
     };
@@ -1502,6 +1829,58 @@ fn activate_selected(state: &State, store: Option<&Store>, paste: bool) {
     flash(state, t!("flash.copied"));
 }
 
+fn selected_snippet(state: &State) -> Option<Snippet> {
+    let id = state.selected.get()?;
+    state
+        .snippets
+        .get()
+        .into_iter()
+        .find(|snippet| snippet.id == id)
+}
+
+/// 片段里的 `{date}` / `{time}` / `{datetime}` 在粘贴时替换。
+fn expand_snippet(content: &str) -> String {
+    let now = Timestamp::now().to_zoned(TimeZone::system());
+    content
+        .replace("{date}", &now.strftime("%Y-%m-%d").to_string())
+        .replace("{time}", &now.strftime("%H:%M").to_string())
+        .replace("{datetime}", &now.strftime("%Y-%m-%d %H:%M").to_string())
+}
+
+fn activate_snippet(state: &State, store: Option<&Store>, paste: bool) {
+    let Some(snippet) = selected_snippet(state) else {
+        return;
+    };
+    let text = expand_snippet(&snippet.content);
+    set_clipboard(text.clone());
+
+    let auto_paste = store
+        .map(|store| crate::settings::read_bool(store, SETTING_AUTO_PASTE, true))
+        .unwrap_or(true);
+    if let Some(store) = store {
+        store.mark_self_write(hash_text(&text));
+        let _ = store.touch_snippet(snippet.id, now_secs());
+        crate::history::bump();
+    }
+
+    if paste && auto_paste {
+        #[cfg(target_os = "macos")]
+        {
+            if crate::paste::is_trusted() {
+                crate::hide_panel();
+                crate::paste::paste_after_hide();
+            } else {
+                crate::paste::prompt_trust_once();
+                flash(state, t!("flash.copied_no_paste"));
+            }
+            return;
+        }
+    }
+
+    crate::hide_panel();
+    flash(state, t!("flash.copied"));
+}
+
 fn toggle_pin(state: &State, store: Option<&Store>) {
     let Some(clip) = selected_clip(state) else {
         return;
@@ -1524,6 +1903,29 @@ fn toggle_pin(state: &State, store: Option<&Store>) {
 }
 
 fn delete_selected(state: &State, store: Option<&Store>) {
+    if state.source.get() == Source::Snippets {
+        let Some(snippet) = selected_snippet(state) else {
+            return;
+        };
+        let Some(store) = store else { return };
+        let previous_rows = state.rows.get();
+        if let Err(e) = store.delete_snippet(snippet.id) {
+            log::error!("delete snippet {}: {e}", snippet.id);
+            return;
+        }
+        crate::history::bump();
+        reload(state, store);
+        let rows = state.rows.get();
+        let (next, jump_to_top) = selection_after_delete(&previous_rows, &rows, snippet.id);
+        state.selected.set(next);
+        if jump_to_top {
+            if let Some(id) = next {
+                reveal_row(id);
+            }
+        }
+        flash(state, t!("flash.deleted"));
+        return;
+    }
     let Some(clip) = selected_clip(state) else {
         return;
     };
@@ -1584,7 +1986,51 @@ fn header_inner(state: State) -> impl IntoElement {
         .border_b(px(1.0))
         .border_b_color(theme::border())
         .child(search_box(state.clone()))
-        .child(filter_bar(state))
+        .child(source_bar(state.clone()))
+        .child(dynamic({
+            let state = state.clone();
+            move || {
+                if state.source.get() == Source::Snippets {
+                    view().into_element()
+                } else {
+                    filter_bar(state.clone()).into_element()
+                }
+            }
+        }))
+}
+
+fn source_bar(state: State) -> impl IntoElement {
+    view()
+        .flex_row()
+        .items_center()
+        .gap_2()
+        .child(source_pill(state.clone(), Source::History, t!("source.history")))
+        .child(source_pill(state, Source::Snippets, t!("source.snippets")))
+}
+
+fn source_pill(state: State, source: Source, label: String) -> impl IntoElement {
+    let current = state.source;
+    view()
+        .on_press(move |_event: &PressEvent| switch_source(&state, source))
+        .px_3()
+        .py_2()
+        .rounded(px(8.0))
+        .bg(move || {
+            if current.get() == source {
+                theme::glass_accent()
+            } else {
+                theme::glass_card()
+            }
+        })
+        .border_1()
+        .border_color(theme::border())
+        .child(text(label).text_size(px(12.0)).text_color(move || {
+            if current.get() == source {
+                theme::accent_fg()
+            } else {
+                theme::muted_fg()
+            }
+        }))
 }
 
 fn search_box(state: State) -> impl IntoElement {
@@ -1612,7 +2058,7 @@ fn search_box(state: State) -> impl IntoElement {
                 .element_ref(&search)
                 .value(query)
                 .on_change(move |value: &str| query.set(value.to_string()))
-                .placeholder(t!("panel.search"))
+                .placeholder(move || if state.source.get() == Source::Snippets { t!("panel.search_snippets") } else { t!("panel.search") })
                 .placeholder_color(rgb(0x8A8178))
                 .text_color(theme::fg())
                 .text_size(px(14.0))
@@ -1678,6 +2124,7 @@ fn filter_pill(state: State, kind: Option<ClipKind>, label: String) -> impl Into
 enum RowKey {
     Section(String),
     Clip(i64),
+    Snippet(i64),
 }
 
 fn sidebar(state: State) -> impl IntoElement {
@@ -1698,6 +2145,7 @@ fn sidebar(state: State) -> impl IntoElement {
                     |row| match row {
                         Row::Section(label) => RowKey::Section(label.clone()),
                         Row::Clip(clip) => RowKey::Clip(clip.id),
+                        Row::Snippet(snippet) => RowKey::Snippet(snippet.id),
                     },
                     move |row, _index| match row.get() {
                         Row::Section(label) => view().px_4().pt_4().pb_2().child(
@@ -1759,6 +2207,81 @@ fn sidebar(state: State) -> impl IntoElement {
                                     ),
                                 )
                         }
+                        Row::Snippet(snippet) => {
+                            let id = snippet.id;
+                            let row_state = state.clone();
+                            let preview = preview_for_text(&snippet.content);
+                            view()
+                                .element_ref(&row_ref(id))
+                                .flex_row()
+                                .items_center()
+                                .gap_3()
+                                .mx_2()
+                                .px_2()
+                                .py_2()
+                                .rounded(px(8.0))
+                                .bg(move || {
+                                    if selected.get() == Some(id) {
+                                        theme::glass_accent()
+                                    } else {
+                                        AdaptiveColor::TRANSPARENT
+                                    }
+                                })
+                                .on_press(move |event: &PressEvent| {
+                                    selected.set(Some(id));
+                                    if event.clicks >= 2 {
+                                        if let Some(store) = crate::history::init() {
+                                            activate_selected(&row_state, Some(store.as_ref()), true);
+                                        }
+                                    }
+                                })
+                                .on_context_menu({
+                                    let menu_state = state.clone();
+                                    move |_event: &nsh_core::ContextMenuEvent| {
+                                        selected.set(Some(id));
+                                        enter_action_mode(&menu_state, ActionMode::Main);
+                                    }
+                                })
+                                .child(
+                                    view()
+                                        .size(px(26.0))
+                                        .items_center()
+                                        .justify_center()
+                                        .rounded(px(7.0))
+                                        .bg(theme::card())
+                                        .border_1()
+                                        .border_color(theme::border())
+                                        .child(
+                                            text("¶")
+                                                .text_size(px(12.0))
+                                                .text_color(theme::muted_fg()),
+                                        ),
+                                )
+                                .child(
+                                    view()
+                                        .flex_1()
+                                        .flex_col()
+                                        .gap_1()
+                                        .child(
+                                            text(snippet.name.clone())
+                                                .truncate()
+                                                .text_size(px(13.0))
+                                                .text_color(move || {
+                                                    if selected.get() == Some(id) {
+                                                        theme::accent_fg()
+                                                    } else {
+                                                        theme::fg()
+                                                    }
+                                                }),
+                                        )
+                                        .child(
+                                            text(preview)
+                                                .truncate()
+                                                .text_size(px(11.0))
+                                                .text_color(theme::muted_fg()),
+                                        ),
+                                )
+                        }
                     },
                 ))),
         )
@@ -1808,22 +2331,61 @@ fn preview_pane(state: State) -> impl IntoElement {
 }
 
 fn preview_content(state: State) -> impl IntoElement {
-    let Some(clip) = selected_clip(&state) else {
-        return view()
-            .flex_1()
-            .items_center()
-            .justify_center()
-            .child(
-                text(t!("panel.empty"))
+    let mut root = view().flex_1().flex_col();
+    if state.source.get() == Source::Snippets {
+        return root.child(snippet_preview(state.clone()));
+    }
+    match selected_clip(&state) {
+        None => root.items_center().justify_center().child(
+            text(t!("panel.empty"))
+                .text_size(px(13.0))
+                .text_color(theme::muted_fg()),
+        ),
+        Some(clip) => root
+            .child(view().flex_1().p_6().child(preview_body(clip.clone())))
+            .child(information(clip)),
+    }
+}
+
+fn snippet_preview(state: State) -> impl IntoElement {
+    let mut root = view().flex_1().flex_col();
+    match selected_snippet(&state) {
+        None => {
+            root = root.items_center().justify_center().child(
+                text(t!("panel.empty_snippets"))
                     .text_size(px(13.0))
                     .text_color(theme::muted_fg()),
             );
-    };
-    view()
-        .flex_1()
-        .flex_col()
-        .child(view().flex_1().p_6().child(preview_body(clip.clone())))
-        .child(information(clip.clone()))
+        }
+        Some(snippet) => {
+            root = root
+                .gap_4()
+                .child(
+                    view().px_6().pt_6().child(
+                        text(snippet.name.clone())
+                            .text_size(px(15.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme::fg()),
+                    ),
+                )
+                .child(
+                    scroll().flex_1().child(
+                        view().px_6().py_2().child(
+                            text(snippet.content.clone())
+                                .selectable(true)
+                                .text_size(px(14.0))
+                                .text_color(theme::fg()),
+                        ),
+                    ),
+                )
+                .child(view().px_6().pb_4().child(
+                    text(t!("snippet.hint"))
+                        .text_size(px(11.0))
+                        .text_color(theme::muted_fg()),
+                ));
+        }
+    }
+    root
 }
 
 fn preview_body(clip: Clip) -> impl IntoElement {
@@ -1979,9 +2541,16 @@ fn footer(state: State) -> impl IntoElement {
 }
 
 fn footer_inner(state: State) -> impl IntoElement {
-    let total = state.clips.get().len();
+    let snippets = state.source.get() == Source::Snippets;
+    let total = if snippets {
+        state.snippets.get().len()
+    } else {
+        state.clips.get().len()
+    };
     let visible = visible_ids(&state.rows.get()).len();
-    let count = if visible == total {
+    let count = if snippets {
+        t!("panel.snippets_count", count = total)
+    } else if visible == total {
         t!("panel.history_count", count = total)
     } else {
         t!("panel.history_filtered", visible = visible, total = total)
@@ -2168,5 +2737,22 @@ mod delete_tests {
         let before = rows(&[(1, true), (2, false)]);
         let after = rows(&[(1, true)]);
         assert_eq!(selection_after_delete(&before, &after, 2), (Some(1), true));
+    }
+}
+
+#[cfg(test)]
+mod snippet_tests {
+    use super::*;
+
+    #[test]
+    fn placeholders_are_replaced() {
+        let expanded = expand_snippet("{date} {time} {datetime}");
+        assert!(!expanded.contains('{'));
+        assert!(expanded.len() > 10);
+    }
+
+    #[test]
+    fn plain_text_is_unchanged() {
+        assert_eq!(expand_snippet("hello"), "hello");
     }
 }
