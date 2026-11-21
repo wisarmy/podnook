@@ -1076,12 +1076,23 @@ fn build_rows(
 ) -> Vec<Row> {
     let q = query.trim().to_lowercase();
     if source == Source::Snippets {
-        return snippets
+        let matched: Vec<Snippet> = snippets
             .iter()
             .filter(|snippet| q.is_empty() || snippet_matches(snippet, &q))
             .cloned()
-            .map(Row::Snippet)
             .collect();
+        let (pinned, rest): (Vec<Snippet>, Vec<Snippet>) =
+            matched.into_iter().partition(|snippet| snippet.pinned);
+        let mut rows = Vec::new();
+        if !pinned.is_empty() {
+            rows.push(Row::Section(t!("group.pinned")));
+            rows.extend(pinned.into_iter().map(Row::Snippet));
+        }
+        if !rest.is_empty() {
+            rows.push(Row::Section(t!("source.snippets")));
+            rows.extend(rest.into_iter().map(Row::Snippet));
+        }
+        return rows;
     }
     let today = local_today();
     let mut pinned = Vec::new();
@@ -1312,6 +1323,13 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     });
     let s = state.clone();
     on_key_with("mod+e", always(), move |_| {
+        if s.source.get() == Source::Snippets {
+            if let Some(snippet) = selected_snippet(&s) {
+                s.actions_open.set(false);
+                start_snippet_editor(&s, Some(snippet), None);
+            }
+            return;
+        }
         if let Some(clip) = selected_clip(&s) {
             if matches!(clip.kind, ClipKind::Text | ClipKind::Link) {
                 s.actions_open.set(false);
@@ -2525,11 +2543,7 @@ fn snippet_preview(state: State) -> impl IntoElement {
                         ),
                     ),
                 )
-                .child(view().px_6().pb_4().child(
-                    text(t!("snippet.hint"))
-                        .text_size(px(11.0))
-                        .text_color(theme::muted_fg()),
-                ));
+                ;
         }
     }
     root

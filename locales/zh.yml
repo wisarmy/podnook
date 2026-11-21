@@ -46,7 +46,6 @@ editor:
   hint: "保存后更新这条历史记录"
   duplicate: "保存失败：内容为空，或与已有条目重复"
   cancel: "取消"
-  copy_suffix: "副本"
   save: "保存"
 
 action:
@@ -189,6 +188,7 @@ snippet:
   keyword: "关键字"
   keyword_placeholder: "仅用于搜索"
   save: "保存"
+  copy_suffix: "副本"
   hint: "占位符：{date}、{time}、{datetime}"
   empty: "片段内容不能为空"
   failed: "保存片段失败"

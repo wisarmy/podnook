@@ -94,3 +94,19 @@ test("duplicate a snippet with ⌘D", async () => {
   await app.wait(700);
   expect(app.texts().some((text) => text.includes("copy"))).toBe(true);
 });
+
+test("⌘E edits the selected snippet", async () => {
+  const app = await open(".", { width: 1120, height: 630, platform: "macos" });
+  await app.wait(300);
+  await app.press("id:source-toggle");
+  await app.wait(300);
+  await app.keyboard.press("mod+n");
+  await app.waitFor("id:snippet-name", { timeout: 5000 });
+  await app.type("id:snippet-name", "Hello");
+  await app.type("id:snippet-body", "World");
+  await app.press("text:Save");
+  await app.wait(600);
+
+  await app.keyboard.press("mod+e");
+  await app.waitFor("id:snippet-name", { timeout: 5000 });
+});

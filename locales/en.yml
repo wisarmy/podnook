@@ -46,7 +46,6 @@ editor:
   hint: "Saving updates this history entry"
   duplicate: "Cannot save: the content is empty or duplicates another entry"
   cancel: "Cancel"
-  copy_suffix: "copy"
   save: "Save"
 
 action:
@@ -189,6 +188,7 @@ snippet:
   keyword: "Keyword"
   keyword_placeholder: "Only used for search"
   save: "Save"
+  copy_suffix: "copy"
   hint: "Placeholders: {date}, {time}, {datetime}"
   empty: "The snippet cannot be empty"
   failed: "Could not save the snippet"
