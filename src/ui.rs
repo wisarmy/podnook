@@ -6,7 +6,6 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -39,10 +38,6 @@ thread_local! {
     static STATE: std::cell::RefCell<Option<State>> = const { std::cell::RefCell::new(None) };
     /// 编辑内容窗口。
     static EDITOR: std::cell::RefCell<Option<WindowRef>> = const { std::cell::RefCell::new(None) };
-    /// 片段编辑窗口。
-    static SNIPPET_EDITOR: std::cell::RefCell<Option<WindowRef>> = const { std::cell::RefCell::new(None) };
-    /// 片段编辑器每次打开用新 id：关掉的窗口在 NSH 里仍占着旧 id。
-    static SNIPPET_SEQ: AtomicU64 = AtomicU64::new(0);
     /// 历史列表的滚动容器：删掉最后一条时把滚动条真正拉回顶部。
     static SIDEBAR: std::cell::RefCell<Option<ElementRef>> = const { std::cell::RefCell::new(None) };
     /// 历史列表每一行的 ref：选中项变化时把它滚进视野。
@@ -115,6 +110,11 @@ struct State {
     clips: Signal<Vec<Clip>>,
     snippets: Signal<Vec<Snippet>>,
     source: Signal<Source>,
+    editing: Signal<bool>,
+    edit_id: Signal<Option<i64>>,
+    edit_name: Signal<String>,
+    edit_content: Signal<String>,
+    edit_keyword: Signal<String>,
     query: Signal<String>,
     filter: Signal<Option<ClipKind>>,
     selected: Signal<Option<i64>>,
@@ -217,6 +217,11 @@ pub fn shell() -> impl IntoElement {
         clips,
         snippets,
         source,
+        editing: signal(false),
+        edit_id: signal(None::<i64>),
+        edit_name: signal(String::new()),
+        edit_content: signal(String::new()),
+        edit_keyword: signal(String::new()),
         query,
         filter,
         selected,
@@ -294,14 +299,17 @@ pub fn glass_backdrop() -> MacOsBackdrop {
 }
 
 fn shell_view(state: State) -> impl IntoElement {
-    view()
+    let root = view()
         .flex_1()
         .macos_backdrop(glass_backdrop())
         .bg(theme::glass_bg())
         .text_color(theme::fg())
         .rounded(px(14.0))
-        .overflow_hidden()
-        .child(header(state.clone()))
+        .overflow_hidden();
+    if state.editing.get() {
+        return root.child(snippet_form(state.clone()));
+    }
+    root.child(header(state.clone()))
         .child(
             view()
                 .flex_row()
@@ -311,6 +319,145 @@ fn shell_view(state: State) -> impl IntoElement {
         )
         .child(footer(state.clone()))
         .child(actions_overlay(state.clone()))
+}
+
+/// 片段编辑态：整块替换列表，和 Raycast 的 Update Snippet 一样。
+fn snippet_form(state: State) -> impl IntoElement {
+    let name = state.edit_name;
+    let content = state.edit_content;
+    let keyword = state.edit_keyword;
+    let cancel_state = state.clone();
+    let back_state = state.clone();
+    let save_state = state.clone();
+    view()
+        .flex_1()
+        .flex_col()
+        .p_6()
+        .gap_4()
+        .child(
+            view()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .child(
+                    view()
+                        .on_press(move |_event: &PressEvent| cancel_snippet_editor(&back_state))
+                        .px_2()
+                        .py_1()
+                        .rounded(px(7.0))
+                        .bg(theme::card())
+                        .border_1()
+                        .border_color(theme::border())
+                        .cursor_pointer()
+                        .child(
+                            text("←")
+                                .text_size(px(13.0))
+                                .text_color(theme::fg()),
+                        ),
+                )
+                .child(
+                    text(t!("snippet.title"))
+                        .text_size(px(11.0))
+                        .text_color(theme::muted_fg()),
+                ),
+        )
+        .child(
+            view()
+                .flex_col()
+                .gap_2()
+                .child(
+                    text(t!("snippet.name"))
+                        .text_size(px(11.0))
+                        .text_color(theme::muted_fg()),
+                )
+                .child(
+                    input()
+                        .test_id("snippet-name")
+                        .value(name)
+                        .on_change(move |value: &str| name.set(value.to_string()))
+                        .placeholder(t!("snippet.name"))
+                        .text_size(px(13.0))
+                        .px_3()
+                        .py_2()
+                        .rounded(px(8.0))
+                        .bg(theme::glass_card())
+                        .border_1()
+                        .border_color(theme::border())
+                        .auto_focus(true),
+                ),
+        )
+        .child(
+            view()
+                .flex_1()
+                .flex_col()
+                .gap_2()
+                .child(
+                    text(t!("snippet.body"))
+                        .text_size(px(11.0))
+                        .text_color(theme::muted_fg()),
+                )
+                .child(
+                    view()
+                        .flex_1()
+                        .flex_col()
+                        .rounded(px(8.0))
+                        .bg(theme::glass_card())
+                        .border_1()
+                        .border_color(theme::border())
+                        .p_3()
+                        .child(
+                            input()
+                                .test_id("snippet-body")
+                                .multiline(true)
+                                .flex_1()
+                                .value(content)
+                                .on_change(move |value: &str| content.set(value.to_string()))
+                                .text_size(px(13.0))
+                                .text_color(theme::fg()),
+                        ),
+                ),
+        )
+        .child(
+            view()
+                .flex_col()
+                .gap_2()
+                .child(
+                    text(t!("snippet.keyword"))
+                        .text_size(px(11.0))
+                        .text_color(theme::muted_fg()),
+                )
+                .child(
+                    input()
+                        .test_id("snippet-keyword")
+                        .value(keyword)
+                        .on_change(move |value: &str| keyword.set(value.to_string()))
+                        .placeholder(t!("snippet.keyword_placeholder"))
+                        .text_size(px(13.0))
+                        .px_3()
+                        .py_2()
+                        .rounded(px(8.0))
+                        .bg(theme::glass_card())
+                        .border_1()
+                        .border_color(theme::border()),
+                ),
+        )
+        .child(
+            text(t!("snippet.hint"))
+                .text_size(px(11.0))
+                .text_color(theme::muted_fg()),
+        )
+        .child(
+            view()
+                .flex_row()
+                .justify_end()
+                .gap_2()
+                .child(editor_button(t!("editor.cancel"), false, move || {
+                    cancel_snippet_editor(&cancel_state)
+                }))
+                .child(editor_button(t!("snippet.save"), true, move || {
+                    save_snippet(&save_state)
+                })),
+        )
 }
 
 pub fn open_editor(clip: Clip) {
@@ -359,174 +506,66 @@ pub fn refresh_editor_title() {
     });
 }
 
-/// 打开片段编辑器：`existing` 为 `Some` 时编辑，`content` 为预填正文。
-pub fn open_snippet_editor(existing: Option<Snippet>, content: Option<String>) {
-    close_snippet_editor();
-    let mut attributes = WindowAttributes::default();
-    attributes.activate = Some(false);
-    attributes.focusable = Some(true);
-    attributes.resizable = Some(true);
-    attributes.close_on_escape = Some(true);
-    attributes.transparent = Some(true);
-    attributes.level = Some(WindowLevel::Floating);
-    attributes.workspaces = Some(Workspaces::All);
-    let id = format!(
-        "snippet-editor-{}",
-        SNIPPET_SEQ.with(|seq| seq.fetch_add(1, Ordering::Relaxed))
-    );
-    let window = panel_window()
-        .id(id)
-        .kind(WindowKind::Panel)
-        .title(t!("snippet.title"))
-        .default_size(size(px(560.0), px(420.0)))
-        .attributes(attributes)
-        .content(move || edit_snippet(existing.clone(), content.clone()));
-    if let Some(window) = open_window(window) {
-        window.focus();
-        let refocus = window.clone();
-        set_timeout(Duration::from_millis(150), move || refocus.focus());
-        SNIPPET_EDITOR.with(|slot| *slot.borrow_mut() = Some(window));
-    }
-}
-
-fn close_snippet_editor() {
-    SNIPPET_EDITOR.with(|slot| {
-        if let Some(window) = slot.borrow_mut().take() {
-            if window.state().is_some() {
-                window.close();
-            }
-        }
-    });
-}
-
-fn edit_snippet(existing: Option<Snippet>, content: Option<String>) -> impl IntoElement {
-    let store = crate::history::init();
-    let snippet_id = existing.as_ref().map(|snippet| snippet.id);
-    let name = signal(
+/// 进入片段编辑态：`existing` 为 `Some` 时编辑它，`content` 为预填正文。
+fn start_snippet_editor(state: &State, existing: Option<Snippet>, content: Option<String>) {
+    state.edit_id.set(existing.as_ref().map(|snippet| snippet.id));
+    state.edit_name.set(
         existing
             .as_ref()
             .map(|snippet| snippet.name.clone())
             .unwrap_or_default(),
     );
-    let body = signal(
+    state.edit_content.set(
         content
             .or_else(|| existing.as_ref().map(|snippet| snippet.content.clone()))
             .unwrap_or_default(),
     );
-    let keyword = signal(
+    state.edit_keyword.set(
         existing
             .as_ref()
             .map(|snippet| snippet.keyword.clone())
             .unwrap_or_default(),
     );
-    let notice = signal(None::<String>);
+    state.actions_open.set(false);
+    state.editing.set(true);
+}
 
-    let save_store = store.clone();
-    let save = move || {
-        let Some(store) = save_store.as_deref() else {
-            return;
-        };
-        let text = body.get();
-        if text.trim().is_empty() {
-            notice.set(Some(t!("snippet.empty")));
-            return;
-        }
-        let title = name.get();
-        let title = if title.trim().is_empty() {
-            preview_for_text(&text)
-        } else {
-            title.trim().to_string()
-        };
-        let alias = keyword.get();
-        let now = now_secs();
-        let result = match snippet_id {
-            Some(id) => store.update_snippet(id, &title, &text, &alias, now),
-            None => store
-                .create_snippet(&title, &text, &alias, now)
-                .map(|_| ()),
-        };
-        match result {
-            Ok(()) => {
-                crate::history::bump();
-                crate::show_panel();
-                close_snippet_editor();
-            }
-            Err(e) => {
-                log::error!("save snippet: {e}");
-                notice.set(Some(t!("snippet.failed")));
-            }
-        }
-    };
-    let cancel = || {
-        crate::show_panel();
-        close_snippet_editor();
-    };
+fn cancel_snippet_editor(state: &State) {
+    state.editing.set(false);
+}
 
-    view()
-        .flex_1()
-        .flex_col()
-        .macos_backdrop(glass_backdrop())
-        .bg(theme::glass_bg())
-        .text_color(theme::fg())
-        .p_4()
-        .gap_3()
-        .child(
-            text(t!("snippet.title"))
-                .text_size(px(13.0))
-                .text_color(theme::muted_fg()),
-        )
-        .child(
-            input()
-                .test_id("snippet-name")
-                .value(name)
-                .on_change(move |value: &str| name.set(value.to_string()))
-                .placeholder(t!("snippet.name"))
-                .text_size(px(13.0))
-                .auto_focus(true),
-        )
-        .child(
-            view()
-                .flex_1()
-                .flex_col()
-                .rounded(px(8.0))
-                .bg(theme::glass_card())
-                .border_1()
-                .border_color(theme::border())
-                .p_3()
-                .child(
-                    input()
-                        .test_id("snippet-body")
-                        .multiline(true)
-                        .flex_1()
-                        .placeholder(t!("snippet.body"))
-                        .value(body)
-                        .on_change(move |value: &str| body.set(value.to_string()))
-                        .text_size(px(13.0))
-                        .text_color(theme::fg()),
-                ),
-        )
-        .child(
-            text(t!("snippet.hint"))
-                .text_size(px(11.0))
-                .text_color(theme::muted_fg()),
-        )
-        .child(dynamic(move || {
-            if let Some(message) = notice.get() {
-                text(message)
-                    .text_size(px(11.0))
-                    .text_color(theme::danger())
-            } else {
-                text("").text_size(px(11.0))
-            }
-        }))
-        .child(
-            view()
-                .flex_row()
-                .justify_end()
-                .gap_2()
-                .child(editor_button(t!("editor.cancel"), false, cancel))
-                .child(editor_button(t!("editor.save"), true, save)),
-        )
+fn save_snippet(state: &State) {
+    let Some(store) = crate::history::init() else {
+        return;
+    };
+    let body = state.edit_content.get();
+    if body.trim().is_empty() {
+        flash(state, t!("snippet.empty"));
+        return;
+    }
+    let name = state.edit_name.get();
+    let name = if name.trim().is_empty() {
+        preview_for_text(&body)
+    } else {
+        name.trim().to_string()
+    };
+    let keyword = state.edit_keyword.get();
+    let now = now_secs();
+    let result = match state.edit_id.get() {
+        Some(id) => store.update_snippet(id, &name, &body, &keyword, now),
+        None => store.create_snippet(&name, &body, &keyword, now).map(|_| ()),
+    };
+    match result {
+        Ok(()) => {
+            state.editing.set(false);
+            crate::history::bump();
+            reload(state, store.as_ref());
+        }
+        Err(e) => {
+            log::error!("save snippet: {e}");
+            flash(state, t!("snippet.failed"));
+        }
+    }
 }
 
 fn edit_content(clip: Clip) -> impl IntoElement {
@@ -1235,6 +1274,10 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     let s = state.clone();
     let db = store.clone();
     on_key_with("enter", always(), move |_| {
+        if s.editing.get() {
+            save_snippet(&s);
+            return;
+        }
         if s.actions_open.get() {
             if s.actions_mode.get() == ActionMode::SaveFile {
                 save_now(&s);
@@ -1252,6 +1295,10 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     let s = state.clone();
     let db = store.clone();
     on_key_with("mod+enter", always(), move |_| {
+        if s.editing.get() {
+            save_snippet(&s);
+            return;
+        }
         activate_selected(&s, db.as_deref(), false)
     });
     let s = state.clone();
@@ -1308,7 +1355,9 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     });
     let s = state.clone();
     on_key_with("escape", always(), move |_| {
-        if s.actions_open.get() {
+        if s.editing.get() {
+            cancel_snippet_editor(&s);
+        } else if s.actions_open.get() {
             close_actions(&s);
         } else {
             reset_on_next_show();
@@ -1319,13 +1368,15 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     // ⌘S：历史里把选中条目存成片段；片段模式下新建。
     let save_state = state.clone();
     on_key("mod+s", move |_| {
-        if save_state.source.get() == Source::Snippets {
-            open_snippet_editor(None, None);
+        if save_state.editing.get() {
+            save_snippet(&save_state);
+        } else if save_state.source.get() == Source::Snippets {
+            start_snippet_editor(&save_state, None, None);
         } else {
             let content = selected_clip(&save_state)
                 .and_then(|clip| clip.content)
                 .unwrap_or_default();
-            open_snippet_editor(None, Some(content));
+            start_snippet_editor(&save_state, None, Some(content));
         }
     });
 
@@ -1623,7 +1674,7 @@ fn run_action(state: &State, store: Option<&Store>, kind: ActionKind) {
             if state.source.get() == Source::Snippets {
                 if let Some(snippet) = selected_snippet(state) {
                     state.actions_open.set(false);
-                    open_snippet_editor(Some(snippet), None);
+                    start_snippet_editor(state, Some(snippet), None);
                 }
                 return;
             }
@@ -1663,11 +1714,11 @@ fn run_action(state: &State, store: Option<&Store>, kind: ActionKind) {
                 .and_then(|clip| clip.content)
                 .unwrap_or_default();
             close_actions(state);
-            open_snippet_editor(None, Some(content));
+            start_snippet_editor(state, None, Some(content));
         }
         ActionKind::NewSnippet => {
             close_actions(state);
-            open_snippet_editor(None, None);
+            start_snippet_editor(state, None, None);
         }
         ActionKind::DeleteEntries => enter_action_mode(state, ActionMode::Range),
         ActionKind::DeleteAll => enter_action_mode(state, ActionMode::ConfirmAll),
@@ -1986,7 +2037,6 @@ fn header_inner(state: State) -> impl IntoElement {
         .border_b(px(1.0))
         .border_b_color(theme::border())
         .child(search_box(state.clone()))
-        .child(source_bar(state.clone()))
         .child(dynamic({
             let state = state.clone();
             move || {
@@ -1997,15 +2047,6 @@ fn header_inner(state: State) -> impl IntoElement {
                 }
             }
         }))
-}
-
-fn source_bar(state: State) -> impl IntoElement {
-    view()
-        .flex_row()
-        .items_center()
-        .gap_2()
-        .child(source_pill(state.clone(), Source::History, t!("source.history")))
-        .child(source_pill(state, Source::Snippets, t!("source.snippets")))
 }
 
 fn source_pill(state: State, source: Source, label: String) -> impl IntoElement {
@@ -2068,7 +2109,9 @@ fn search_box(state: State) -> impl IntoElement {
                     let state = state.clone();
                     move |key: &str| {
                         if key == "Escape" {
-                            if state.actions_open.get() {
+                            if state.editing.get() {
+                                cancel_snippet_editor(&state);
+                            } else if state.actions_open.get() {
                                 close_actions(&state);
                             } else {
                                 reset_on_next_show();
@@ -2138,6 +2181,16 @@ fn sidebar(state: State) -> impl IntoElement {
         .bg(theme::glass_surface())
         .border_r(px(1.0))
         .border_r_color(theme::border())
+        .child(
+            view().px_3().pt_3().pb_1().child(
+                view()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(source_pill(state.clone(), Source::History, t!("source.history")))
+                    .child(source_pill(state.clone(), Source::Snippets, t!("source.snippets"))),
+            ),
+        )
         .child(
             scroll().element_ref(&scroll_ref).flex_1().child(
                 view().flex_col().py_2().child(each(
@@ -2210,7 +2263,13 @@ fn sidebar(state: State) -> impl IntoElement {
                         Row::Snippet(snippet) => {
                             let id = snippet.id;
                             let row_state = state.clone();
-                            let preview = preview_for_text(&snippet.content);
+                            let snippets = state.snippets;
+                            let lookup = move |id: i64| {
+                                snippets
+                                    .get()
+                                    .into_iter()
+                                    .find(|candidate| candidate.id == id)
+                            };
                             view()
                                 .element_ref(&row_ref(id))
                                 .flex_row()
@@ -2263,8 +2322,12 @@ fn sidebar(state: State) -> impl IntoElement {
                                         .flex_col()
                                         .gap_1()
                                         .child(
-                                            text(snippet.name.clone())
-                                                .truncate()
+                                            text(move || {
+                                                lookup(id)
+                                                    .map(|current| current.name)
+                                                    .unwrap_or_default()
+                                            })
+                                            .truncate()
                                                 .text_size(px(13.0))
                                                 .text_color(move || {
                                                     if selected.get() == Some(id) {
@@ -2275,8 +2338,12 @@ fn sidebar(state: State) -> impl IntoElement {
                                                 }),
                                         )
                                         .child(
-                                            text(preview)
-                                                .truncate()
+                                            text(move || {
+                                                lookup(id)
+                                                    .map(|current| preview_for_text(&current.content))
+                                                    .unwrap_or_default()
+                                            })
+                                            .truncate()
                                                 .text_size(px(11.0))
                                                 .text_color(theme::muted_fg()),
                                         ),

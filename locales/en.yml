@@ -43,7 +43,6 @@ panel:
 
 editor:
   title: "Edit content"
-  body: "Snippet text"
   hint: "Saving updates this history entry"
   duplicate: "Cannot save: the content is empty or duplicates another entry"
   cancel: "Cancel"
@@ -183,6 +182,10 @@ notice:
 snippet:
   title: "Snippet"
   name: "Name"
+  body: "Snippet text"
+  keyword: "Keyword"
+  keyword_placeholder: "Only used for search"
+  save: "Save"
   hint: "Placeholders: {date}, {time}, {datetime}"
   empty: "The snippet cannot be empty"
   failed: "Could not save the snippet"

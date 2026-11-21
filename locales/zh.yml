@@ -43,7 +43,6 @@ panel:
 
 editor:
   title: "编辑内容"
-  body: "片段内容"
   hint: "保存后更新这条历史记录"
   duplicate: "保存失败：内容为空，或与已有条目重复"
   cancel: "取消"
@@ -183,6 +182,10 @@ notice:
 snippet:
   title: "片段"
   name: "名称"
+  body: "片段内容"
+  keyword: "关键字"
+  keyword_placeholder: "仅用于搜索"
+  save: "保存"
   hint: "占位符：{date}、{time}、{datetime}"
   empty: "片段内容不能为空"
   failed: "保存片段失败"

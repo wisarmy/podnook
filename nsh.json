@@ -34,6 +34,7 @@
   },
   "capabilities": {
     "windows": true,
-    "statusBar": true
+    "statusBar": true,
+    "clipboard": true
   }
 }
