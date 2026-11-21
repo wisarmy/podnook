@@ -150,6 +150,7 @@ pub struct Snippet {
     pub content: String,
     /// 搜索别名；v1 不做全局展开。
     pub keyword: String,
+    pub pinned: bool,
     pub created_at: i64,
     pub updated_at: i64,
     pub last_used_at: i64,

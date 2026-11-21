@@ -34,13 +34,15 @@ test("copies a snippet to the clipboard", async () => {
   const app = await open(".", { width: 1120, height: 630, platform: "macos" });
   await app.press("id:source-toggle");
   await app.wait(400);
-  if (!app.texts().includes("Signature")) {
+  if (!app.texts().includes("Standup note")) {
     console.log("no seeded snippets; skipping");
     return;
   }
+  await app.press("text:Standup note");
+  await app.wait(200);
   await app.keyboard.press("mod+enter");
   await app.wait(500);
-  expect(app.clipboard()).toBe("Best regards,\nWisarmy");
+  expect(app.clipboard()).toContain("shipped snippets");
 });
 
 test("editing a snippet updates the list", async () => {
@@ -54,11 +56,41 @@ test("editing a snippet updates the list", async () => {
   await app.press("text:Signature");
   await app.press("text:Actions >> nth=0");
   await app.wait(400);
-  await app.press("text:Edit content");
+  await app.press("text:Edit Snippet");
   await app.waitFor("id:snippet-name", { timeout: 5000 });
   await app.type("id:snippet-name", " edited");
   await app.wait(200);
   await app.press("text:Save");
   await app.wait(700);
   expect(app.texts().some((text) => text.includes("edited"))).toBe(true);
+});
+
+test("create a snippet with ⌘N", async () => {
+  const app = await open(".", { width: 1120, height: 630, platform: "macos" });
+  await app.wait(300);
+  await app.press("id:source-toggle");
+  await app.wait(300);
+  await app.keyboard.press("mod+n");
+  await app.waitFor("id:snippet-name", { timeout: 5000 });
+  await app.press("text:Cancel");
+  await app.wait(400);
+  expect(app.texts().some((text) => text.includes("Snippets"))).toBe(true);
+});
+
+test("duplicate a snippet with ⌘D", async () => {
+  const app = await open(".", { width: 1120, height: 630, platform: "macos" });
+  await app.wait(300);
+  await app.press("id:source-toggle");
+  await app.wait(400);
+  if (!app.texts().includes("Standup note")) {
+    console.log("no seeded snippets; skipping");
+    return;
+  }
+  await app.press("text:Standup note");
+  await app.wait(200);
+  await app.keyboard.press("mod+d");
+  await app.waitFor("id:snippet-name", { timeout: 5000 });
+  await app.press("text:Save");
+  await app.wait(700);
+  expect(app.texts().some((text) => text.includes("copy"))).toBe(true);
 });

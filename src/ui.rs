@@ -119,6 +119,7 @@ struct State {
     filter: Signal<Option<ClipKind>>,
     selected: Signal<Option<i64>>,
     flash: Signal<Option<String>>,
+    flash_until: Signal<i64>,
     search: ElementRef,
     rows: Memo<Vec<Row>>,
     actions_open: Signal<bool>,
@@ -170,6 +171,8 @@ enum ActionKind {
     ConfirmDeleteAll,
     SaveSnippet,
     NewSnippet,
+    PinSnippet,
+    DuplicateSnippet,
 }
 
 #[derive(Clone)]
@@ -226,6 +229,7 @@ pub fn shell() -> impl IntoElement {
         filter,
         selected,
         flash,
+        flash_until: signal(0i64),
         search,
         rows,
         actions_open: signal(false),
@@ -275,9 +279,14 @@ pub fn shell() -> impl IntoElement {
 
     // 捕获线程写库后递增 generation，这里按需重新查库。
     let refresh = state.clone();
+    let flash_state = state.flash;
+    let flash_until = state.flash_until;
     let refresh_store = store.clone();
     let last_gen = signal(crate::history::generation());
     set_interval(Duration::from_millis(150), move || {
+        if flash_state.get().is_some() && now_secs() >= flash_until.get() {
+            flash_state.set(None);
+        }
         let now = crate::history::generation();
         if now == last_gen.get() {
             return;
@@ -1320,12 +1329,29 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     let s = state.clone();
     let db = store.clone();
     on_key_with("shift+mod+p", always(), move |_| {
-        toggle_pin(&s, db.as_deref());
+        if s.source.get() == Source::Snippets {
+            toggle_snippet_pin(&s, db.as_deref());
+        } else {
+            toggle_pin(&s, db.as_deref());
+        }
         if s.actions_open.get() {
             close_actions(&s);
         }
     });
     let s = state.clone();
+    let duplicate = state.clone();
+    let duplicate_db = store.clone();
+    on_key_with("mod+d", always(), move |_| {
+        if duplicate.source.get() == Source::Snippets {
+            duplicate_snippet(&duplicate, duplicate_db.as_deref());
+        }
+    });
+    let create = state.clone();
+    on_key_with("mod+n", always(), move |_| {
+        if create.source.get() == Source::Snippets {
+            start_snippet_editor(&create, None, None);
+        }
+    });
     on_key_with("mod+p", always(), move |_| cycle_filter(&s));
     // Raycast 对齐：⌃X 删除当前条目。
     let s = state.clone();
@@ -1370,9 +1396,7 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     on_key("mod+s", move |_| {
         if save_state.editing.get() {
             save_snippet(&save_state);
-        } else if save_state.source.get() == Source::Snippets {
-            start_snippet_editor(&save_state, None, None);
-        } else {
+        } else if save_state.source.get() == Source::History {
             let content = selected_clip(&save_state)
                 .and_then(|clip| clip.content)
                 .unwrap_or_default();
@@ -1454,6 +1478,7 @@ fn move_action(state: &State, delta: isize) {
 
 fn action_items(state: &State) -> Vec<ActionItem> {
     if state.source.get() == Source::Snippets {
+        let pinned = selected_snippet(state).is_some_and(|snippet| snippet.pinned);
         let mut items = vec![
             ActionItem {
                 kind: ActionKind::Paste,
@@ -1468,15 +1493,31 @@ fn action_items(state: &State) -> Vec<ActionItem> {
                 destructive: false,
             },
             ActionItem {
+                kind: ActionKind::PinSnippet,
+                label: if pinned {
+                    t!("action.unpin")
+                } else {
+                    t!("action.pin")
+                },
+                shortcut: "shift+mod+p",
+                destructive: false,
+            },
+            ActionItem {
                 kind: ActionKind::Edit,
-                label: t!("action.edit"),
+                label: t!("action.edit_snippet"),
                 shortcut: "mod+e",
+                destructive: false,
+            },
+            ActionItem {
+                kind: ActionKind::DuplicateSnippet,
+                label: t!("action.duplicate_snippet"),
+                shortcut: "mod+d",
                 destructive: false,
             },
             ActionItem {
                 kind: ActionKind::NewSnippet,
                 label: t!("action.new_snippet"),
-                shortcut: "mod+s",
+                shortcut: "mod+n",
                 destructive: false,
             },
             ActionItem {
@@ -1720,6 +1761,14 @@ fn run_action(state: &State, store: Option<&Store>, kind: ActionKind) {
             close_actions(state);
             start_snippet_editor(state, None, None);
         }
+        ActionKind::PinSnippet => {
+            toggle_snippet_pin(state, store);
+            close_actions(state);
+        }
+        ActionKind::DuplicateSnippet => {
+            duplicate_snippet(state, store);
+            close_actions(state);
+        }
         ActionKind::DeleteEntries => enter_action_mode(state, ActionMode::Range),
         ActionKind::DeleteAll => enter_action_mode(state, ActionMode::ConfirmAll),
         ActionKind::Back => {
@@ -1880,6 +1929,43 @@ fn activate_selected(state: &State, store: Option<&Store>, paste: bool) {
     flash(state, t!("flash.copied"));
 }
 
+fn toggle_snippet_pin(state: &State, store: Option<&Store>) {
+    let Some(snippet) = selected_snippet(state) else {
+        return;
+    };
+    let Some(store) = store else { return };
+    if let Err(e) = store.set_snippet_pinned(snippet.id, !snippet.pinned) {
+        log::error!("pin snippet {}: {e}", snippet.id);
+        return;
+    }
+    crate::history::bump();
+    reload(state, store);
+    flash(
+        state,
+        if snippet.pinned {
+            t!("flash.unpinned")
+        } else {
+            t!("flash.pinned")
+        },
+    );
+}
+
+fn duplicate_snippet(state: &State, store: Option<&Store>) {
+    let Some(snippet) = selected_snippet(state) else {
+        return;
+    };
+    let Some(store) = store else { return };
+    let name = format!("{} {}", snippet.name, t!("snippet.copy_suffix"));
+    let Ok(id) = store.create_snippet(&name, &snippet.content, &snippet.keyword, now_secs()) else {
+        return;
+    };
+    crate::history::bump();
+    reload(state, store);
+    if let Some(copy) = state.snippets.get().into_iter().find(|item| item.id == id) {
+        start_snippet_editor(state, Some(copy), None);
+    }
+}
+
 fn selected_snippet(state: &State) -> Option<Snippet> {
     let id = state.selected.get()?;
     state
@@ -2015,9 +2101,8 @@ fn selection_after_delete(
 }
 
 fn flash(state: &State, message: impl Into<String>) {
-    let flash = state.flash;
-    flash.set(Some(message.into()));
-    set_timeout(Duration::from_millis(1400), move || flash.set(None));
+    state.flash.set(Some(message.into()));
+    state.flash_until.set(now_secs() + 2);
 }
 
 // ---------------------------------------------------------------- 顶栏
@@ -2288,20 +2373,49 @@ fn sidebar(state: State) -> impl IntoElement {
                                         .flex_col()
                                         .gap_1()
                                         .child(
-                                            text(move || {
-                                                lookup(id)
-                                                    .map(|current| current.name)
-                                                    .unwrap_or_default()
-                                            })
-                                            .truncate()
-                                                .text_size(px(13.0))
-                                                .text_color(move || {
-                                                    if selected.get() == Some(id) {
-                                                        theme::accent_fg()
-                                                    } else {
-                                                        theme::fg()
-                                                    }
-                                                }),
+                                            view()
+                                                .flex_row()
+                                                .items_center()
+                                                .gap_2()
+                                                .child(
+                                                    text(move || {
+                                                        lookup(id)
+                                                            .map(|current| current.name)
+                                                            .unwrap_or_default()
+                                                    })
+                                                    .truncate()
+                                                    .text_size(px(13.0))
+                                                    .text_color(move || {
+                                                        if selected.get() == Some(id) {
+                                                            theme::accent_fg()
+                                                        } else {
+                                                            theme::fg()
+                                                        }
+                                                    }),
+                                                )
+                                                .child(
+                                                    dynamic(move || {
+                                                        let keyword = lookup(id)
+                                                            .map(|current| current.keyword)
+                                                            .unwrap_or_default();
+                                                        if keyword.is_empty() {
+                                                            return view().into_element();
+                                                        }
+                                                        view()
+                                                            .px_1()
+                                                            .py(px(1.0))
+                                                            .rounded(px(4.0))
+                                                            .bg(theme::glass_card())
+                                                            .border_1()
+                                                            .border_color(theme::border())
+                                                            .child(
+                                                                text(keyword).text_size(px(10.0)).text_color(
+                                                                    theme::muted_fg(),
+                                                                ),
+                                                            )
+                                                            .into_element()
+                                                    }),
+                                                ),
                                         )
                                         .child(
                                             text(move || {

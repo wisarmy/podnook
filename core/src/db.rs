@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS snippets (
   name         TEXT    NOT NULL,
   content      TEXT    NOT NULL,
   keyword      TEXT    NOT NULL DEFAULT '',
+  pinned       INTEGER NOT NULL DEFAULT 0,
   created_at   INTEGER NOT NULL,
   updated_at   INTEGER NOT NULL,
   last_used_at INTEGER NOT NULL DEFAULT 0
@@ -98,6 +99,17 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
         "UPDATE clips SET preview = '' WHERE kind IN ('image', 'file') AND preview <> ''",
         [],
     )?;
+    let mut stmt = conn.prepare("PRAGMA table_info(snippets)")?;
+    let columns: Vec<String> = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<_>>()?;
+    drop(stmt);
+    if !columns.is_empty() && !columns.iter().any(|name| name == "pinned") {
+        conn.execute(
+            "ALTER TABLE snippets ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
     Ok(())
 }
 
@@ -542,9 +554,9 @@ impl Store {
     pub fn list_snippets(&self) -> rusqlite::Result<Vec<Snippet>> {
         let conn = self.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, name, content, keyword, created_at, updated_at, last_used_at
+            "SELECT id, name, content, keyword, pinned, created_at, updated_at, last_used_at
                FROM snippets
-              ORDER BY last_used_at DESC, created_at DESC",
+              ORDER BY pinned DESC, last_used_at DESC, created_at DESC",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(Snippet {
@@ -552,9 +564,10 @@ impl Store {
                 name: row.get(1)?,
                 content: row.get(2)?,
                 keyword: row.get(3)?,
-                created_at: row.get(4)?,
-                updated_at: row.get(5)?,
-                last_used_at: row.get(6)?,
+                pinned: row.get::<_, i64>(4)? != 0,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+                last_used_at: row.get(7)?,
             })
         })?;
         rows.collect()
@@ -590,6 +603,15 @@ impl Store {
                 SET name = ?1, content = ?2, keyword = ?3, updated_at = ?4
               WHERE id = ?5",
             params![name, content, keyword, now, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_snippet_pinned(&self, id: i64, pinned: bool) -> rusqlite::Result<()> {
+        let conn = self.lock();
+        conn.execute(
+            "UPDATE snippets SET pinned = ?1 WHERE id = ?2",
+            params![pinned as i64, id],
         )?;
         Ok(())
     }

@@ -30,7 +30,7 @@ panel:
   search: "Search clipboard history…"
   search_snippets: "Search snippets…"
   snippets_count: "Snippets · %{count}"
-  empty_snippets: "No snippets yet. Press ⌘S to create one."
+  empty_snippets: "No snippets yet. Press ⌘N to create one."
   actions: "Actions"
   empty: "Copy something and it will show up here."
   history_count: "Clipboard history · %{count} items"
@@ -46,6 +46,7 @@ editor:
   hint: "Saving updates this history entry"
   duplicate: "Cannot save: the content is empty or duplicates another entry"
   cancel: "Cancel"
+  copy_suffix: "copy"
   save: "Save"
 
 action:
@@ -63,6 +64,8 @@ action:
   open_link: "Open link"
   open_file: "Open file"
   reveal: "Reveal in Finder"
+  edit_snippet: "Edit Snippet"
+  duplicate_snippet: "Duplicate Snippet"
   save_snippet: "Save as snippet…"
   new_snippet: "New snippet…"
 
