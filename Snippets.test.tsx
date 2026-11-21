@@ -123,7 +123,11 @@ test("typing { opens the placeholder menu", async () => {
   await app.wait(400);
   expect(app.texts()).toContain("Custom Format");
 
-  await app.press("text:Date");
+  await app.type("id:snippet-body", "da");
+  await app.wait(400);
+  expect(app.texts()).not.toContain("Time");
+
+  await app.keyboard.press("enter");
   await app.wait(300);
-  expect(app.texts()).not.toContain("Custom Format");
+  expect(app.texts()).not.toContain("Date & Time");
 });

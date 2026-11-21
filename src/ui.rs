@@ -124,6 +124,7 @@ struct State {
     edit_content: Signal<String>,
     edit_keyword: Signal<String>,
     placeholder_menu: Signal<bool>,
+    placeholder_selected: Signal<usize>,
     query: Signal<String>,
     filter: Signal<Option<ClipKind>>,
     selected: Signal<Option<i64>>,
@@ -235,6 +236,7 @@ pub fn shell() -> impl IntoElement {
         edit_content: signal(String::new()),
         edit_keyword: signal(String::new()),
         placeholder_menu: signal(false),
+        placeholder_selected: signal(0usize),
         query,
         filter,
         selected,
@@ -346,6 +348,7 @@ fn snippet_form(state: State) -> impl IntoElement {
     let content = state.edit_content;
     let keyword = state.edit_keyword;
     let menu = state.placeholder_menu;
+    let selected = state.placeholder_selected;
     let cancel_state = state.clone();
     let back_state = state.clone();
     let save_state = state.clone();
@@ -433,9 +436,15 @@ fn snippet_form(state: State) -> impl IntoElement {
                                 .flex_1()
                                 .value(content)
                                 .on_change(move |value: &str| {
-                                    let opened = value.ends_with('{');
                                     content.set(value.to_string());
-                                    menu.set(opened);
+                                    if value.ends_with('{') {
+                                        selected.set(0);
+                                        menu.set(true);
+                                    } else if menu.get() && placeholder_query(value).is_some() {
+                                        selected.set(0);
+                                    } else {
+                                        menu.set(false);
+                                    }
                                 })
                                 .text_size(px(13.0))
                                 .text_color(theme::fg()),
@@ -1294,6 +1303,14 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
 
     let s = state.clone();
     on_key_with("down", always(), move |_| {
+        if s.editing.get() && s.placeholder_menu.get() {
+            let len = filtered_placeholders(&s.edit_content.get()).len();
+            if len > 0 {
+                let current = s.placeholder_selected.get().min(len - 1);
+                s.placeholder_selected.set((current + 1).min(len - 1));
+            }
+            return;
+        }
         if s.actions_open.get() {
             move_action(&s, 1);
         } else {
@@ -1302,6 +1319,11 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     });
     let s = state.clone();
     on_key_with("up", always(), move |_| {
+        if s.editing.get() && s.placeholder_menu.get() {
+            let current = s.placeholder_selected.get();
+            s.placeholder_selected.set(current.saturating_sub(1));
+            return;
+        }
         if s.actions_open.get() {
             move_action(&s, -1);
         } else {
@@ -1311,6 +1333,10 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     let s = state.clone();
     let db = store.clone();
     on_key_with("enter", always(), move |_| {
+        if s.editing.get() && s.placeholder_menu.get() {
+            insert_placeholder(&s, s.placeholder_selected.get());
+            return;
+        }
         if s.editing.get() {
             save_snippet(&s);
             return;
@@ -1332,6 +1358,10 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     let s = state.clone();
     let db = store.clone();
     on_key_with("mod+enter", always(), move |_| {
+        if s.editing.get() && s.placeholder_menu.get() {
+            insert_placeholder(&s, s.placeholder_selected.get());
+            return;
+        }
         if s.editing.get() {
             save_snippet(&s);
             return;
@@ -1416,6 +1446,10 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     });
     let s = state.clone();
     on_key_with("escape", always(), move |_| {
+        if s.editing.get() && s.placeholder_menu.get() {
+            s.placeholder_menu.set(false);
+            return;
+        }
         if s.editing.get() {
             cancel_snippet_editor(&s);
         } else if s.actions_open.get() {
@@ -2496,12 +2530,96 @@ fn icon_box(clip: &Clip) -> impl IntoElement {
 
 // ---------------------------------------------------------------- 预览
 
-/// 输入 `{` 时弹出：时间类占位符 + 自定义格式。
+/// 一个可插入的占位符。
+#[derive(Clone)]
+struct PlaceholderItem {
+    token: String,
+    label: String,
+    sample: String,
+}
+
+fn placeholder_items() -> Vec<PlaceholderItem> {
+    vec![
+        PlaceholderItem {
+            token: "{time}".into(),
+            label: t!("snippet.time"),
+            sample: crate::snippet_text::expand("{time}"),
+        },
+        PlaceholderItem {
+            token: "{date}".into(),
+            label: t!("snippet.date"),
+            sample: crate::snippet_text::expand("{date}"),
+        },
+        PlaceholderItem {
+            token: "{datetime}".into(),
+            label: t!("snippet.datetime"),
+            sample: crate::snippet_text::expand("{datetime}"),
+        },
+        PlaceholderItem {
+            token: "{weekday}".into(),
+            label: t!("snippet.weekday"),
+            sample: crate::snippet_text::expand("{weekday}"),
+        },
+        PlaceholderItem {
+            token: "{date format=\"yyyy-MM-dd\"}".into(),
+            label: t!("snippet.custom_format"),
+            sample: "{date format=\"yyyy-MM-dd\"}".into(),
+        },
+    ]
+}
+
+/// `{` 之后还没闭合的那段就是筛选词；没有就返回 `None`。
+fn placeholder_query(content: &str) -> Option<String> {
+    let at = content.rfind('{')?;
+    let tail = &content[at + 1..];
+    if tail.contains('}') || tail.chars().count() > 24 {
+        return None;
+    }
+    Some(tail.to_string())
+}
+
+fn filtered_placeholders(content: &str) -> Vec<PlaceholderItem> {
+    let query = placeholder_query(content)
+        .unwrap_or_default()
+        .to_lowercase();
+    placeholder_items()
+        .into_iter()
+        .filter(|item| {
+            query.is_empty()
+                || item.label.to_lowercase().contains(&query)
+                || item.token.to_lowercase().contains(&query)
+        })
+        .collect()
+}
+
+fn insert_placeholder(state: &State, index: usize) {
+    let content = state.edit_content.get();
+    let items = filtered_placeholders(&content);
+    if items.is_empty() {
+        return;
+    }
+    let item = &items[index.min(items.len() - 1)];
+    let head = match content.rfind('{') {
+        Some(at) => &content[..at],
+        None => content.as_str(),
+    };
+    state.edit_content.set(format!("{head}{}", item.token));
+    state.placeholder_menu.set(false);
+}
+
+/// 输入 `{` 时弹出：时间类占位符 + 自定义格式；输入文字筛选，方向键选择。
 fn placeholder_menu(state: State) -> impl IntoElement {
     dynamic(move || {
-        if !state.placeholder_menu.get() {
+        let content = state.edit_content.get();
+        if !state.placeholder_menu.get() || placeholder_query(&content).is_none() {
             return view().into_element();
         }
+        let items = filtered_placeholders(&content);
+        if items.is_empty() {
+            return view().into_element();
+        }
+        let selected = state.placeholder_selected.get().min(items.len() - 1);
+
         let mut list = view()
             .absolute()
             .top(px(56.0))
@@ -2516,60 +2634,42 @@ fn placeholder_menu(state: State) -> impl IntoElement {
             .border_color(theme::border())
             .shadow_md();
 
-        for (token, label, sample) in [
-            ("{time}", t!("snippet.time"), crate::snippet_text::expand("{time}")),
-            ("{date}", t!("snippet.date"), crate::snippet_text::expand("{date}")),
-            (
-                "{datetime}",
-                t!("snippet.datetime"),
-                crate::snippet_text::expand("{datetime}"),
-            ),
-            (
-                "{weekday}",
-                t!("snippet.weekday"),
-                crate::snippet_text::expand("{weekday}"),
-            ),
-        ] {
-            let state = state.clone();
-            list = list.child(insert_row(
-                state,
-                label,
-                sample,
-                token.to_string(),
-            ));
+        for (index, item) in items.into_iter().enumerate() {
+            let row_state = state.clone();
+            let active = index == selected;
+            list = list.child(
+                view()
+                    .on_press(move |_event: &PressEvent| insert_placeholder(&row_state, index))
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .px_3()
+                    .py_2()
+                    .rounded(px(7.0))
+                    .cursor_pointer()
+                    .bg(if active {
+                        theme::glass_accent()
+                    } else {
+                        AdaptiveColor::TRANSPARENT
+                    })
+                    .child(
+                        text(item.label.clone())
+                            .text_size(px(12.0))
+                            .text_color(if active {
+                                theme::accent_fg()
+                            } else {
+                                theme::fg()
+                            }),
+                    )
+                    .child(
+                        text(item.sample.clone())
+                            .text_size(px(11.0))
+                            .text_color(theme::muted_fg()),
+                    ),
+            );
         }
-        let custom = state.clone();
-        list = list.child(insert_row(
-            custom,
-            t!("snippet.custom_format"),
-            "{date format=\"yyyy-MM-dd\"}".to_string(),
-            "{date format=\"yyyy-MM-dd\"}".to_string(),
-        ));
         list.into_element()
     })
-}
-
-fn insert_row(state: State, label: String, hint: String, token: String) -> View {
-    view()
-        .on_press(move |_event: &PressEvent| {
-            let current = state.edit_content.get();
-            let trimmed = current.strip_suffix('{').unwrap_or(&current).to_string();
-            state.edit_content.set(format!("{trimmed}{token}"));
-            state.placeholder_menu.set(false);
-        })
-        .flex_row()
-        .items_center()
-        .justify_between()
-        .px_3()
-        .py_2()
-        .rounded(px(7.0))
-        .cursor_pointer()
-        .child(text(label).text_size(px(12.0)).text_color(theme::fg()))
-        .child(
-            text(hint)
-                .text_size(px(11.0))
-                .text_color(theme::muted_fg()),
-        )
 }
 
 fn preview_pane(state: State) -> impl IntoElement {
