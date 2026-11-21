@@ -4,11 +4,11 @@ test("switches between history and snippets", async () => {
   const app = await open(".", { width: 1120, height: 630, platform: "macos" });
   await app.wait(300);
 
-  await app.press("text:Snippets");
+  await app.press("id:source-toggle");
   await app.wait(400);
   expect(app.texts()).not.toContain("All");
 
-  await app.press("text:History");
+  await app.press("id:source-toggle");
   await app.wait(400);
   expect(app.texts()).toContain("All");
 });
@@ -32,7 +32,7 @@ test("opens the snippet editor from the actions", async () => {
 // 测试宿主的剪贴板在内存里：用 app.clipboard() 断言写入。
 test("copies a snippet to the clipboard", async () => {
   const app = await open(".", { width: 1120, height: 630, platform: "macos" });
-  await app.press("text:Snippets");
+  await app.press("id:source-toggle");
   await app.wait(400);
   if (!app.texts().includes("Signature")) {
     console.log("no seeded snippets; skipping");
@@ -45,7 +45,7 @@ test("copies a snippet to the clipboard", async () => {
 
 test("editing a snippet updates the list", async () => {
   const app = await open(".", { width: 1120, height: 630, platform: "macos" });
-  await app.press("text:Snippets");
+  await app.press("id:source-toggle");
   await app.wait(400);
   if (!app.texts().includes("Signature")) {
     console.log("no seeded snippets; skipping");

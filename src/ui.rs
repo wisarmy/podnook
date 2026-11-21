@@ -2049,31 +2049,6 @@ fn header_inner(state: State) -> impl IntoElement {
         }))
 }
 
-fn source_pill(state: State, source: Source, label: String) -> impl IntoElement {
-    let current = state.source;
-    view()
-        .on_press(move |_event: &PressEvent| switch_source(&state, source))
-        .px_3()
-        .py_2()
-        .rounded(px(8.0))
-        .bg(move || {
-            if current.get() == source {
-                theme::glass_accent()
-            } else {
-                theme::glass_card()
-            }
-        })
-        .border_1()
-        .border_color(theme::border())
-        .child(text(label).text_size(px(12.0)).text_color(move || {
-            if current.get() == source {
-                theme::accent_fg()
-            } else {
-                theme::muted_fg()
-            }
-        }))
-}
-
 fn search_box(state: State) -> impl IntoElement {
     let query = state.query;
     let search = state.search;
@@ -2136,6 +2111,7 @@ fn filter_bar(state: State) -> impl IntoElement {
         .child(filter_pill(state, Some(ClipKind::File), t!("kind.file")))
 }
 
+
 fn filter_pill(state: State, kind: Option<ClipKind>, label: String) -> impl IntoElement {
     let filter = state.filter;
     view()
@@ -2181,16 +2157,6 @@ fn sidebar(state: State) -> impl IntoElement {
         .bg(theme::glass_surface())
         .border_r(px(1.0))
         .border_r_color(theme::border())
-        .child(
-            view().px_3().pt_3().pb_1().child(
-                view()
-                    .flex_row()
-                    .items_center()
-                    .gap_2()
-                    .child(source_pill(state.clone(), Source::History, t!("source.history")))
-                    .child(source_pill(state.clone(), Source::Snippets, t!("source.snippets"))),
-            ),
-        )
         .child(
             scroll().element_ref(&scroll_ref).flex_1().child(
                 view().flex_col().py_2().child(each(
@@ -2640,18 +2606,37 @@ fn footer_inner(state: State) -> impl IntoElement {
         .py_2()
         .border_t(px(1.0))
         .border_t_color(theme::border())
-        .child(
+        .child({
+            let toggle_state = state.clone();
             view()
+                .test_id("source-toggle")
+                .on_press(move |_event: &PressEvent| {
+                    let next = if toggle_state.source.get() == Source::Snippets {
+                        Source::History
+                    } else {
+                        Source::Snippets
+                    };
+                    switch_source(&toggle_state, next);
+                })
+                .cursor_pointer()
                 .flex_row()
                 .items_center()
                 .gap_2()
+                .px_2()
+                .py_1()
+                .rounded(px(6.0))
                 .child(view().size(px(8.0)).rounded_full().bg(theme::primary()))
                 .child(
                     text(count)
                         .text_size(px(12.0))
                         .text_color(theme::muted_fg()),
-                ),
-        )
+                )
+                .child(
+                    text("⇄")
+                        .text_size(px(11.0))
+                        .text_color(theme::muted_fg()),
+                )
+        })
         .child(right)
 }
 

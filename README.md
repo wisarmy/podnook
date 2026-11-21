@@ -139,7 +139,8 @@ bundle id changes, or you switch machines (`tccutil reset Accessibility com.podn
   `⌘E` edit, `⇧⌘P` pin, `⌥⇧⌘S` save as file, `⌘P` cycle type filter, `⌃X`
   delete, `⇧⌘X` delete recent…, `⌃⇧X` clear all, `⌘O` open link/file, `⇧⌘O`
   reveal in Finder, `⌘,` settings, `Esc` close. `⌘1` shows the history and `⌘2`
-  the snippets; in the history `⌘S` saves the selected clip as a snippet, and in
+  the snippets (or click the count at the bottom left); in the history `⌘S` saves the
+  selected clip as a snippet, and in
   the snippets `⌘S` creates one. Snippets understand `{date}`, `{time}` and
   `{datetime}`. `⌫` only edits the search field.
 - Saving writes to `~/Downloads` by default; the path is editable in the actions
@@ -198,7 +199,7 @@ make install   # 打包 → 用固定身份重签 → 校验 → 安装到 /Appl
 快捷键：`↵` 粘贴、`⌘↵` 仅复制、`⌘K` 操作面板、`⌘E` 编辑内容、`⇧⌘P` 固定、
 `⌥⇧⌘S` 保存为文件、`⌘P` 切换类型筛选、`⌃X` 删除、`⇧⌘X` 删除最近…、
 `⌃⇧X` 清空全部、`⌘O` 打开链接/文件、`⇧⌘O` 在 Finder 中显示、`⌘,` 设置、`Esc` 收起。
-`⌘1` 是历史、`⌘2` 是片段；历史里 `⌘S` 把选中条目存成片段，片段里 `⌘S` 新建。
+`⌘1` 是历史、`⌘2` 是片段，也可以点左下角的计数切换；历史里 `⌘S` 把选中条目存成片段，片段里 `⌘S` 新建。
 片段支持 `{date}`、`{time}`、`{datetime}` 占位符。
 
 片段库（v0.3）：把常用文本存下来，用 `⌘2` 切换、搜索后回车粘贴；不监听全局键盘，
