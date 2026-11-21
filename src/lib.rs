@@ -13,6 +13,7 @@ mod paste;
 mod history;
 mod locale;
 mod settings;
+mod snippet_text;
 pub mod theme;
 mod ui;
 

@@ -110,3 +110,20 @@ test("⌘E edits the selected snippet", async () => {
   await app.keyboard.press("mod+e");
   await app.waitFor("id:snippet-name", { timeout: 5000 });
 });
+
+test("typing { opens the placeholder menu", async () => {
+  const app = await open(".", { width: 1120, height: 630, platform: "macos" });
+  await app.wait(300);
+  await app.press("id:source-toggle");
+  await app.wait(300);
+  await app.keyboard.press("mod+n");
+  await app.waitFor("id:snippet-name", { timeout: 5000 });
+  await app.type("id:snippet-name", "Placeholders");
+  await app.type("id:snippet-body", "today {");
+  await app.wait(400);
+  expect(app.texts()).toContain("Custom Format");
+
+  await app.press("text:Date");
+  await app.wait(300);
+  expect(app.texts()).not.toContain("Custom Format");
+});

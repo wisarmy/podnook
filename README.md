@@ -141,8 +141,9 @@ bundle id changes, or you switch machines (`tccutil reset Accessibility com.podn
   reveal in Finder, `⌘,` settings, `Esc` close. `⌘1` shows the history and `⌘2`
   the snippets (or click the count at the bottom left); in the history `⌘S` saves the
   selected clip as a snippet, and in the snippets `⌘N` creates one, `⌘D`
-  duplicates it and `⇧⌘P` pins it. Snippets understand `{date}`, `{time}` and
-  `{datetime}`. `⌫` only edits the search field.
+  duplicates it and `⇧⌘P` pins it. Snippets understand `{date}`, `{time}`, `{datetime}` and `{weekday}`, or a
+  custom `{date format="yyyy-MM-dd"}`; typing `{` in the editor opens the
+  placeholder menu. The hotkey always reopens the clipboard history. `⌫` only edits the search field.
 - Saving writes to `~/Downloads` by default; the path is editable in the actions
   panel. Text and links save as `.txt`, images as `.png`, file items copy the
   original file.
@@ -200,7 +201,8 @@ make install   # 打包 → 用固定身份重签 → 校验 → 安装到 /Appl
 `⌥⇧⌘S` 保存为文件、`⌘P` 切换类型筛选、`⌃X` 删除、`⇧⌘X` 删除最近…、
 `⌃⇧X` 清空全部、`⌘O` 打开链接/文件、`⇧⌘O` 在 Finder 中显示、`⌘,` 设置、`Esc` 收起。
 `⌘1` 是历史、`⌘2` 是片段，也可以点左下角的计数切换；历史里 `⌘S` 把选中条目存成片段，片段里 `⌘N` 新建、`⌘D` 复制一份、`⇧⌘P` 置顶。
-片段支持 `{date}`、`{time}`、`{datetime}` 占位符。
+片段支持 `{date}`、`{time}`、`{datetime}`、`{weekday}`，以及自定义格式
+`{date format="yyyy-MM-dd"}`；在正文里输入 `{` 会弹出占位符菜单。呼出热键总是回到历史。
 
 片段库（v0.3）：把常用文本存下来，用 `⌘2` 切换、搜索后回车粘贴；不监听全局键盘，
 也不新增权限。

@@ -181,6 +181,9 @@ notice:
   already_listed: "已经在列表里"
   added: "已添加 %{bundle}"
 
+weekday:
+  names: "周一,周二,周三,周四,周五,周六,周日"
+
 snippet:
   title: "片段"
   name: "名称"
@@ -189,6 +192,11 @@ snippet:
   keyword_placeholder: "仅用于搜索"
   save: "保存"
   copy_suffix: "副本"
-  hint: "占位符：{date}、{time}、{datetime}"
+  time: "时间"
+  date: "日期"
+  datetime: "日期与时间"
+  weekday: "星期"
+  custom_format: "自定义格式"
+  hint: "输入 { 插入日期或时间占位符"
   empty: "片段内容不能为空"
   failed: "保存片段失败"

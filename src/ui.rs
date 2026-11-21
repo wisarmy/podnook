@@ -86,6 +86,14 @@ pub fn reset_on_next_show() {
 /// 面板每次呼出：Esc 收起时清空搜索、回到最新一条；点别处消失则保留上次的选择。
 pub fn prepare_for_show() {
     let reset = RESET_ON_SHOW.with(|flag| flag.replace(false));
+    // ⌘⇧V 的语义是打开剪贴板历史：除非正在编辑片段，否则每次都回到历史。
+    STATE.with(|slot| {
+        if let Some(state) = slot.borrow().as_ref() {
+            if !state.editing.get() && state.source.get() != Source::History {
+                switch_source(state, Source::History);
+            }
+        }
+    });
     STATE.with(|slot| {
         if let Some(state) = slot.borrow().as_ref() {
             if reset {
@@ -115,6 +123,7 @@ struct State {
     edit_name: Signal<String>,
     edit_content: Signal<String>,
     edit_keyword: Signal<String>,
+    placeholder_menu: Signal<bool>,
     query: Signal<String>,
     filter: Signal<Option<ClipKind>>,
     selected: Signal<Option<i64>>,
@@ -225,6 +234,7 @@ pub fn shell() -> impl IntoElement {
         edit_name: signal(String::new()),
         edit_content: signal(String::new()),
         edit_keyword: signal(String::new()),
+        placeholder_menu: signal(false),
         query,
         filter,
         selected,
@@ -335,6 +345,7 @@ fn snippet_form(state: State) -> impl IntoElement {
     let name = state.edit_name;
     let content = state.edit_content;
     let keyword = state.edit_keyword;
+    let menu = state.placeholder_menu;
     let cancel_state = state.clone();
     let back_state = state.clone();
     let save_state = state.clone();
@@ -407,6 +418,7 @@ fn snippet_form(state: State) -> impl IntoElement {
                 )
                 .child(
                     view()
+                        .relative()
                         .flex_1()
                         .flex_col()
                         .rounded(px(8.0))
@@ -420,11 +432,16 @@ fn snippet_form(state: State) -> impl IntoElement {
                                 .multiline(true)
                                 .flex_1()
                                 .value(content)
-                                .on_change(move |value: &str| content.set(value.to_string()))
+                                .on_change(move |value: &str| {
+                                    let opened = value.ends_with('{');
+                                    content.set(value.to_string());
+                                    menu.set(opened);
+                                })
                                 .text_size(px(13.0))
                                 .text_color(theme::fg()),
                         ),
-                ),
+                )
+                .child(placeholder_menu(state.clone())),
         )
         .child(
             view()
@@ -1993,20 +2010,11 @@ fn selected_snippet(state: &State) -> Option<Snippet> {
         .find(|snippet| snippet.id == id)
 }
 
-/// 片段里的 `{date}` / `{time}` / `{datetime}` 在粘贴时替换。
-fn expand_snippet(content: &str) -> String {
-    let now = Timestamp::now().to_zoned(TimeZone::system());
-    content
-        .replace("{date}", &now.strftime("%Y-%m-%d").to_string())
-        .replace("{time}", &now.strftime("%H:%M").to_string())
-        .replace("{datetime}", &now.strftime("%Y-%m-%d %H:%M").to_string())
-}
-
 fn activate_snippet(state: &State, store: Option<&Store>, paste: bool) {
     let Some(snippet) = selected_snippet(state) else {
         return;
     };
-    let text = expand_snippet(&snippet.content);
+    let text = crate::snippet_text::expand(&snippet.content);
     set_clipboard(text.clone());
 
     let auto_paste = store
@@ -2488,6 +2496,82 @@ fn icon_box(clip: &Clip) -> impl IntoElement {
 
 // ---------------------------------------------------------------- 预览
 
+/// 输入 `{` 时弹出：时间类占位符 + 自定义格式。
+fn placeholder_menu(state: State) -> impl IntoElement {
+    dynamic(move || {
+        if !state.placeholder_menu.get() {
+            return view().into_element();
+        }
+        let mut list = view()
+            .absolute()
+            .top(px(56.0))
+            .left(px(8.0))
+            .right(px(8.0))
+            .z_index(30)
+            .flex_col()
+            .p_2()
+            .rounded(px(10.0))
+            .bg(theme::card())
+            .border_1()
+            .border_color(theme::border())
+            .shadow_md();
+
+        for (token, label, sample) in [
+            ("{time}", t!("snippet.time"), crate::snippet_text::expand("{time}")),
+            ("{date}", t!("snippet.date"), crate::snippet_text::expand("{date}")),
+            (
+                "{datetime}",
+                t!("snippet.datetime"),
+                crate::snippet_text::expand("{datetime}"),
+            ),
+            (
+                "{weekday}",
+                t!("snippet.weekday"),
+                crate::snippet_text::expand("{weekday}"),
+            ),
+        ] {
+            let state = state.clone();
+            list = list.child(insert_row(
+                state,
+                label,
+                sample,
+                token.to_string(),
+            ));
+        }
+        let custom = state.clone();
+        list = list.child(insert_row(
+            custom,
+            t!("snippet.custom_format"),
+            "{date format=\"yyyy-MM-dd\"}".to_string(),
+            "{date format=\"yyyy-MM-dd\"}".to_string(),
+        ));
+        list.into_element()
+    })
+}
+
+fn insert_row(state: State, label: String, hint: String, token: String) -> View {
+    view()
+        .on_press(move |_event: &PressEvent| {
+            let current = state.edit_content.get();
+            let trimmed = current.strip_suffix('{').unwrap_or(&current).to_string();
+            state.edit_content.set(format!("{trimmed}{token}"));
+            state.placeholder_menu.set(false);
+        })
+        .flex_row()
+        .items_center()
+        .justify_between()
+        .px_3()
+        .py_2()
+        .rounded(px(7.0))
+        .cursor_pointer()
+        .child(text(label).text_size(px(12.0)).text_color(theme::fg()))
+        .child(
+            text(hint)
+                .text_size(px(11.0))
+                .text_color(theme::muted_fg()),
+        )
+}
+
 fn preview_pane(state: State) -> impl IntoElement {
     view()
         .flex_1()
@@ -2536,10 +2620,10 @@ fn snippet_preview(state: State) -> impl IntoElement {
                 .child(
                     scroll().flex_1().child(
                         view().px_6().py_2().child(
-                            text(snippet.content.clone())
-                                .selectable(true)
-                                .text_size(px(14.0))
-                                .text_color(theme::fg()),
+                            view()
+                                .flex_row()
+                                .flex_wrap()
+                                .children(preview_runs(&snippet.content)),
                         ),
                     ),
                 )
@@ -2547,6 +2631,41 @@ fn snippet_preview(state: State) -> impl IntoElement {
         }
     }
     root
+}
+
+/// 分段渲染时文本节点会吞掉首尾空格，段与段之间用一个固定宽度的空白单元补上。
+fn preview_runs(content: &str) -> Vec<nsh_core::element::AnyElement> {
+    let mut runs = Vec::new();
+    for piece in crate::snippet_text::render(content) {
+        match piece {
+            crate::snippet_text::Piece::Value(value) => {
+                runs.push(text_(value).text_color(theme::primary()).into_element());
+            }
+            crate::snippet_text::Piece::Text(text) => {
+                let mut body = text.as_str();
+                if body.starts_with(' ') {
+                    runs.push(view().size(px(5.0)).into_element());
+                    body = body.trim_start_matches(' ');
+                }
+                let trailing = body.ends_with(' ');
+                let body = body.trim_end_matches(' ');
+                if !body.is_empty() {
+                    runs.push(text_(body.to_string()).into_element());
+                }
+                if trailing {
+                    runs.push(view().size(px(5.0)).into_element());
+                }
+            }
+        }
+    }
+    runs
+}
+
+fn text_(content: String) -> nsh_core::element::Text {
+    text(content)
+        .selectable(true)
+        .text_size(px(14.0))
+        .text_color(theme::fg())
 }
 
 fn preview_body(clip: Clip) -> impl IntoElement {
@@ -2920,19 +3039,3 @@ mod delete_tests {
     }
 }
 
-#[cfg(test)]
-mod snippet_tests {
-    use super::*;
-
-    #[test]
-    fn placeholders_are_replaced() {
-        let expanded = expand_snippet("{date} {time} {datetime}");
-        assert!(!expanded.contains('{'));
-        assert!(expanded.len() > 10);
-    }
-
-    #[test]
-    fn plain_text_is_unchanged() {
-        assert_eq!(expand_snippet("hello"), "hello");
-    }
-}

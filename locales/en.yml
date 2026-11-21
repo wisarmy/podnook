@@ -181,6 +181,9 @@ notice:
   already_listed: "Already in the list"
   added: "Added %{bundle}"
 
+weekday:
+  names: "Monday,Tuesday,Wednesday,Thursday,Friday,Saturday,Sunday"
+
 snippet:
   title: "Snippet"
   name: "Name"
@@ -189,6 +192,11 @@ snippet:
   keyword_placeholder: "Only used for search"
   save: "Save"
   copy_suffix: "copy"
-  hint: "Placeholders: {date}, {time}, {datetime}"
+  time: "Time"
+  date: "Date"
+  datetime: "Date & Time"
+  weekday: "Weekday"
+  custom_format: "Custom Format"
+  hint: "Type { to insert a date or time placeholder"
   empty: "The snippet cannot be empty"
   failed: "Could not save the snippet"
