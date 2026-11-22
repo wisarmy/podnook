@@ -154,6 +154,17 @@ enum Source {
     Snippets,
 }
 
+/// 来源的切换顺序：以后加新来源就加在这里。
+const SOURCES: &[Source] = &[Source::History, Source::Snippets];
+
+fn next_source(current: Source) -> Source {
+    let index = SOURCES
+        .iter()
+        .position(|source| *source == current)
+        .unwrap_or(0);
+    SOURCES[(index + 1) % SOURCES.len()]
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ActionMode {
     Main,
@@ -1466,6 +1477,15 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
                 .unwrap_or_default();
             start_snippet_editor(&save_state, None, Some(content));
         }
+    });
+
+    let cycle = state.clone();
+    on_key("shift+tab", move |_| {
+        if cycle.editing.get() || cycle.edit_clip.get().is_some() {
+            return;
+        }
+        let next = next_source(cycle.source.get());
+        switch_source(&cycle, next);
     });
 
     let source_1 = state.clone();

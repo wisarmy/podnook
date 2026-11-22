@@ -131,3 +131,17 @@ test("typing { opens the placeholder menu", async () => {
   await app.wait(300);
   expect(app.texts()).not.toContain("Date & Time");
 });
+
+test("shift+tab cycles the sources", async () => {
+  const app = await open(".", { width: 1120, height: 630, platform: "macos" });
+  await app.wait(300);
+  expect(app.texts()).toContain("Clipboard history");
+
+  await app.keyboard.press("shift+tab");
+  await app.wait(400);
+  expect(app.texts()).toContain("Snippets");
+
+  await app.keyboard.press("shift+tab");
+  await app.wait(400);
+  expect(app.texts()).toContain("Clipboard history");
+});
