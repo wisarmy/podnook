@@ -29,12 +29,9 @@ group:
 panel:
   search: "Search clipboard history…"
   search_snippets: "Search snippets…"
-  snippets_count: "Snippets · %{count}"
   empty_snippets: "No snippets yet. Press ⌘N to create one."
   actions: "Actions"
   empty: "Copy something and it will show up here."
-  history_count: "Clipboard history · %{count} items"
-  history_filtered: "Clipboard history · %{visible} / %{total} items"
   no_actions: "No matching actions"
   search_actions: "Search actions…"
   truncated_note: "Too long: only the first %{size} were saved."
@@ -200,3 +197,7 @@ snippet:
   hint: "Type { to insert a date or time placeholder"
   empty: "The snippet cannot be empty"
   failed: "Could not save the snippet"
+
+footer:
+  history: "Clipboard history"
+  snippets: "Snippets"

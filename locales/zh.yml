@@ -29,12 +29,9 @@ group:
 panel:
   search: "搜索剪贴板历史…"
   search_snippets: "搜索片段…"
-  snippets_count: "片段 · %{count} 个"
   empty_snippets: "还没有片段，按 ⌘N 新建"
   actions: "操作"
   empty: "复制点什么，就会出现在这里"
-  history_count: "剪贴板历史 · %{count} 条"
-  history_filtered: "剪贴板历史 · %{visible} / %{total} 条"
   no_actions: "没有匹配的操作"
   search_actions: "搜索操作…"
   truncated_note: "内容过长，仅保存了前 %{size}。"
@@ -200,3 +197,7 @@ snippet:
   hint: "输入 { 插入日期或时间占位符"
   empty: "片段内容不能为空"
   failed: "保存片段失败"
+
+footer:
+  history: "剪贴板历史"
+  snippets: "片段"

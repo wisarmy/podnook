@@ -2910,6 +2910,38 @@ fn info_row(label: String, value: String) -> impl IntoElement {
 
 // ---------------------------------------------------------------- 底栏
 
+/// 底栏的来源图标：剪贴板。
+fn clipboard_icon() -> View {
+    view().size(px(14.0)).items_center().justify_center().child(
+        view()
+            .relative()
+            .w(px(11.0))
+            .h(px(12.0))
+            .rounded(px(2.5))
+            .border_1()
+            .border_color(theme::muted_fg())
+            .child(
+                view()
+                    .absolute()
+                    .top(px(-1.5))
+                    .left(px(3.0))
+                    .w(px(6.0))
+                    .h(px(2.5))
+                    .rounded(px(1.0))
+                    .bg(theme::muted_fg()),
+            ),
+    )
+}
+
+/// 底栏的来源图标：片段（三条短线）。
+fn snippet_icon() -> View {
+    view().size(px(14.0)).flex_col().justify_center().gap(px(2.0)).children([
+        view().w(px(10.0)).h(px(1.5)).rounded(px(0.75)).bg(theme::muted_fg()),
+        view().w(px(10.0)).h(px(1.5)).rounded(px(0.75)).bg(theme::muted_fg()),
+        view().w(px(6.0)).h(px(1.5)).rounded(px(0.75)).bg(theme::muted_fg()),
+    ])
+}
+
 fn footer(state: State) -> impl IntoElement {
     let state = state.clone();
     dynamic(move || footer_inner(state.clone()))
@@ -2923,12 +2955,15 @@ fn footer_inner(state: State) -> impl IntoElement {
         state.clips.get().len()
     };
     let visible = visible_ids(&state.rows.get()).len();
-    let count = if snippets {
-        t!("panel.snippets_count", count = total)
-    } else if visible == total {
-        t!("panel.history_count", count = total)
+    let label = if snippets {
+        t!("footer.snippets")
     } else {
-        t!("panel.history_filtered", visible = visible, total = total)
+        t!("footer.history")
+    };
+    let count = if visible == total {
+        total.to_string()
+    } else {
+        format!("{visible} / {total}")
     };
     let mut right = view().flex_row().items_center().gap_4();
     if let Some(message) = state.flash.get() {
@@ -2950,6 +2985,7 @@ fn footer_inner(state: State) -> impl IntoElement {
         .border_t_color(theme::border())
         .child({
             let toggle_state = state.clone();
+            let icon_source = state.source;
             view()
                 .test_id("source-toggle")
                 .on_press(move |_event: &PressEvent| {
@@ -2967,11 +3003,27 @@ fn footer_inner(state: State) -> impl IntoElement {
                 .px_2()
                 .py_1()
                 .rounded(px(6.0))
-                .child(view().size(px(8.0)).rounded_full().bg(theme::primary()))
+                .child(dynamic(move || {
+                    if icon_source.get() == Source::Snippets {
+                        snippet_icon().into_element()
+                    } else {
+                        clipboard_icon().into_element()
+                    }
+                }))
                 .child(
-                    text(count)
+                    text(label)
                         .text_size(px(12.0))
                         .text_color(theme::muted_fg()),
+                )
+                .child(
+                    text("·")
+                        .text_size(px(10.0))
+                        .text_color(theme::muted_fg()),
+                )
+                .child(
+                    text(count)
+                        .text_size(px(11.0))
+                        .text_color(theme::muted_fg().opacity(0.7)),
                 )
                 .child(
                     text("⇄")
