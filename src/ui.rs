@@ -3044,7 +3044,7 @@ fn footer_inner(state: State) -> impl IntoElement {
                         .child(view().translate_y(px(2.5)).child(
                             text(count)
                                 .text_size(px(8.0))
-                                .text_color(theme::muted_fg().opacity(0.7)),
+                                .text_color(theme::muted_fg()),
                         )),
                 )
                 .child(
