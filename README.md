@@ -1,6 +1,7 @@
 # Podnook
 
-> A pod for everything you keep. / 把每件你在乎的事，都收进一只豆荚。
+> A pod for everything you keep. All your clips and snippets, sealed within.
+> 把每件你在乎的事，都收进一只豆荚——每段复制、每句常用，都封在里面。
 
 A local-first, open-source **clipboard history and snippet library** for macOS. Everything you copy stays on your Mac: summon it with one hotkey, search, pin, and paste it back into any app; save the text you reuse as snippets. Nothing is uploaded.
 
