@@ -1,8 +1,8 @@
 {
   "name": "Podnook",
   "id": "com.podnook.app",
-  "version": "0.2.2",
-  "build": 4,
+  "version": "0.3.0",
+  "build": 5,
   "icon": "assets/icon.png",
   "rust": ".",
   "root": "App",

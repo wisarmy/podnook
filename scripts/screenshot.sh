@@ -36,17 +36,12 @@ test("panel", async () => {
   await app.window("panel").screenshot("$OUT/panel.png");
 });
 
-test("editor", async () => {
+test("snippets", async () => {
   const app = await open(".", size);
-  await app.wait(300);
-  await app.keyboard.press("down");
-  await app.keyboard.press("down");
-  await app.keyboard.press("down");
-  await app.wait(200);
-  await app.keyboard.press("mod+e");
-  await app.waitFor("text:Edit content");
+  await app.wait(400);
+  await app.press("id:source-toggle");
   await app.wait(500);
-  await app.window("editor").screenshot("$OUT/editor.png");
+  await app.window("panel").screenshot("$OUT/snippets.png");
 });
 
 test("settings", async () => {
@@ -61,4 +56,4 @@ EOF
 
 PODNOOK_DATA_DIR="$DATA" nsh test "$TEST" --target macos
 
-echo "✓ wrote $OUT/panel.png, editor.png, settings.png"
+echo "✓ wrote $OUT/panel.png, snippets.png, settings.png"

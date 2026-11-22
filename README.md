@@ -11,14 +11,20 @@ Product context and decisions live in [`CONTEXT.md`](CONTEXT.md); architecture d
 </p>
 <p align="center"><sub>Main panel · sample data</sub></p>
 
+<p align="center">
+  <img src="docs/images/snippets.png" width="900" alt="Podnook snippet library beside the clipboard history">
+</p>
+<p align="center"><sub>Snippets · sample data</sub></p>
+
 ## Status
 
-v0.2 (M4 packaged). What works today: menu-bar app without a Dock icon; a global
+Menu-bar app without a Dock icon; a global
 ⌘⇧V hotkey opens a frameless panel (it covers other apps' full-screen spaces;
 closes on blur or Esc); background clipboard capture (text / image / files /
 links), de-duplication, privacy-marker filtering, SQLite persistence; search,
-type filters, preview and metadata, pin, delete, and a **snippet library** (⌘2)
-that keeps reusable text beside the history (⌘S saves a clip as a snippet);
+type filters, preview and metadata, pin, delete, and a **snippet library** that
+keeps reusable text beside the history (⌘S saves a clip, ⌘N creates one, ⌘D
+duplicates, ⇧⌘P pins);
 Return pastes into the app you came from (⌘↵ only copies). The settings window (⌘, or the menu-bar menu) has
 hotkey recording, retention, auto-paste, launch at login, ignored apps, history
 clearing, permission status and the interface language. `make install` packages,
@@ -138,12 +144,15 @@ bundle id changes, or you switch machines (`tccutil reset Accessibility com.podn
 - Shortcuts (aligned with Raycast): `↵` paste, `⌘↵` copy only, `⌘K` actions,
   `⌘E` edit, `⇧⌘P` pin, `⌥⇧⌘S` save as file, `⌘P` cycle type filter, `⌃X`
   delete, `⇧⌘X` delete recent…, `⌃⇧X` clear all, `⌘O` open link/file, `⇧⌘O`
-  reveal in Finder, `⌘,` settings, `Esc` close. `⌘1` shows the history and `⌘2`
-  the snippets (or click the count at the bottom left); in the history `⌘S` saves the
+  reveal in Finder, `⌘,` settings, `Esc` close. `⇧Tab`, `⌘1` and `⌘2` switch
+  between the history and the snippets (or click the icon and count at the
+  bottom left); in the history `⌘S` saves the
   selected clip as a snippet, and in the snippets `⌘N` creates one, `⌘D`
   duplicates it and `⇧⌘P` pins it. Snippets understand `{date}`, `{time}`, `{datetime}` and `{weekday}`, or a
   custom `{date format="yyyy-MM-dd"}`; typing `{` in the editor opens the
-  placeholder menu. The hotkey always reopens the clipboard history. `⌫` only edits the search field.
+  placeholder menu. Editing a clip or a snippet happens in the panel, with
+  `⌘S` or `⌘↵` to save and `Esc` to cancel. The hotkey always reopens the
+  clipboard history. `⌫` only edits the search field.
 - Saving writes to `~/Downloads` by default; the path is editable in the actions
   panel. Text and links save as `.txt`, images as `.png`, file items copy the
   original file.
@@ -200,12 +209,12 @@ make install   # 打包 → 用固定身份重签 → 校验 → 安装到 /Appl
 快捷键：`↵` 粘贴、`⌘↵` 仅复制、`⌘K` 操作面板、`⌘E` 编辑内容、`⇧⌘P` 固定、
 `⌥⇧⌘S` 保存为文件、`⌘P` 切换类型筛选、`⌃X` 删除、`⇧⌘X` 删除最近…、
 `⌃⇧X` 清空全部、`⌘O` 打开链接/文件、`⇧⌘O` 在 Finder 中显示、`⌘,` 设置、`Esc` 收起。
-`⌘1` 是历史、`⌘2` 是片段，也可以点左下角的计数切换；历史里 `⌘S` 把选中条目存成片段，片段里 `⌘N` 新建、`⌘D` 复制一份、`⇧⌘P` 置顶。
+`⇧Tab`、`⌘1`、`⌘2` 都能切换历史与片段，也可以点左下角的图标切换；历史里 `⌘S` 把选中条目存成片段，片段里 `⌘N` 新建、`⌘D` 复制一份、`⇧⌘P` 置顶。
 片段支持 `{date}`、`{time}`、`{datetime}`、`{weekday}`，以及自定义格式
-`{date format="yyyy-MM-dd"}`；在正文里输入 `{` 会弹出占位符菜单。呼出热键总是回到历史。
+`{date format="yyyy-MM-dd"}`；在正文里输入 `{` 会弹出占位符菜单。编辑条目或片段都在面板内
+完成，`⌘S` / `⌘↵` 保存、`Esc` 取消。呼出热键总是回到历史。
 
-片段库（v0.3）：把常用文本存下来，用 `⌘2` 切换、搜索后回车粘贴；不监听全局键盘，
-也不新增权限。
+片段库把常用文本存成本机数据，搜索后回车粘贴；不监听全局键盘，也不新增权限。
 
 ## 开发
 
