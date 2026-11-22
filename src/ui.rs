@@ -3010,20 +3010,22 @@ fn footer_inner(state: State) -> impl IntoElement {
                         clipboard_icon().into_element()
                     }
                 }))
+                // 标签与计数挨在一起，计数做成下标，像脚注标记。
                 .child(
-                    text(label)
-                        .text_size(px(12.0))
-                        .text_color(theme::muted_fg()),
-                )
-                .child(
-                    text("·")
-                        .text_size(px(10.0))
-                        .text_color(theme::muted_fg()),
-                )
-                .child(
-                    text(count)
-                        .text_size(px(11.0))
-                        .text_color(theme::muted_fg().opacity(0.7)),
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(2.0))
+                        .child(
+                            text(label)
+                                .text_size(px(12.0))
+                                .text_color(theme::muted_fg()),
+                        )
+                        .child(view().translate_y(px(2.0)).child(
+                            text(count)
+                                .text_size(px(9.0))
+                                .text_color(theme::muted_fg().opacity(0.75)),
+                        )),
                 )
                 .child(
                     text("⇄")
