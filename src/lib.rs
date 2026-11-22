@@ -213,7 +213,6 @@ pub fn refresh_titles() {    SETTINGS_WINDOW.with(|slot| {
             window.set(attributes);
         }
     });
-    ui::refresh_editor_title();
 }
 
 /// 录制热键前先注销，避免按下旧组合键时面板被呼出。

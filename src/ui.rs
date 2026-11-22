@@ -36,8 +36,6 @@ thread_local! {
     static SEARCH: std::cell::RefCell<Option<ElementRef>> = const { std::cell::RefCell::new(None) };
     /// 面板的界面状态，用于呼出时重置搜索与选中项。
     static STATE: std::cell::RefCell<Option<State>> = const { std::cell::RefCell::new(None) };
-    /// 编辑内容窗口。
-    static EDITOR: std::cell::RefCell<Option<WindowRef>> = const { std::cell::RefCell::new(None) };
     /// 历史列表的滚动容器：删掉最后一条时把滚动条真正拉回顶部。
     static SIDEBAR: std::cell::RefCell<Option<ElementRef>> = const { std::cell::RefCell::new(None) };
     /// 历史列表每一行的 ref：选中项变化时把它滚进视野。
@@ -119,6 +117,7 @@ struct State {
     snippets: Signal<Vec<Snippet>>,
     source: Signal<Source>,
     editing: Signal<bool>,
+    edit_clip: Signal<Option<i64>>,
     edit_id: Signal<Option<i64>>,
     edit_name: Signal<String>,
     edit_content: Signal<String>,
@@ -231,6 +230,7 @@ pub fn shell() -> impl IntoElement {
         snippets,
         source,
         editing: signal(false),
+        edit_clip: signal(None::<i64>),
         edit_id: signal(None::<i64>),
         edit_name: signal(String::new()),
         edit_content: signal(String::new()),
@@ -329,6 +329,9 @@ fn shell_view(state: State) -> impl IntoElement {
         .overflow_hidden();
     if state.editing.get() {
         return root.child(snippet_form(state.clone()));
+    }
+    if state.edit_clip.get().is_some() {
+        return root.child(clip_form(state.clone()));
     }
     root.child(header(state.clone()))
         .child(
@@ -495,50 +498,116 @@ fn snippet_form(state: State) -> impl IntoElement {
         )
 }
 
-pub fn open_editor(clip: Clip) {
-    close_editor();
-    let mut attributes = WindowAttributes::default();
-    attributes.activate = Some(false);
-    attributes.focusable = Some(true);
-    attributes.resizable = Some(true);
-    attributes.close_on_escape = Some(true);
-    attributes.transparent = Some(true);
-    attributes.level = Some(WindowLevel::Floating);
-    attributes.workspaces = Some(Workspaces::All);
-    let window = panel_window()
-        .id("editor")
-        .kind(WindowKind::Panel)
-        .title(t!("editor.title"))
-        .default_size(size(px(640.0), px(460.0)))
-        .attributes(attributes)
-        .content(move || edit_content(clip.clone()));
-    if let Some(window) = open_window(window) {
-        window.focus();
-        let refocus = window.clone();
-        set_timeout(Duration::from_millis(150), move || refocus.focus());
-        EDITOR.with(|slot| *slot.borrow_mut() = Some(window));
+/// 进入剪贴板条目的编辑态：正文复用 `edit_content`，行为与片段编辑一致。
+fn start_clip_editor(state: &State, clip: Clip) {
+    state.editing.set(false);
+    state.placeholder_menu.set(false);
+    state.edit_clip.set(Some(clip.id));
+    state.edit_content
+        .set(clip.content.clone().unwrap_or_default());
+    state.editing.set(false);
+    state.actions_open.set(false);
+}
+
+fn cancel_clip_editor(state: &State) {
+    state.edit_clip.set(None);
+}
+
+fn save_clip_editor(state: &State) {
+    let Some(id) = state.edit_clip.get() else {
+        return;
+    };
+    let Some(store) = crate::history::init() else {
+        return;
+    };
+    match store.update_text(id, &state.edit_content.get()) {
+        Ok(()) => {
+            state.edit_clip.set(None);
+            crate::history::bump();
+            reload(state, store.as_ref());
+        }
+        Err(e) => {
+            log::error!("update clip: {e}");
+            flash(state, t!("editor.duplicate"));
+        }
     }
 }
 
-fn close_editor() {
-    EDITOR.with(|slot| {
-        if let Some(window) = slot.borrow_mut().take() {
-            if window.state().is_some() {
-                window.close();
-            }
-        }
-    });
-}
-
-/// 语言切换后更新编辑窗口的标题。
-pub fn refresh_editor_title() {
-    EDITOR.with(|slot| {
-        if let Some(window) = slot.borrow().as_ref() {
-            let mut attributes = WindowAttributes::default();
-            attributes.title = Some(t!("editor.title"));
-            window.set(attributes);
-        }
-    });
+fn clip_form(state: State) -> impl IntoElement {
+    let content = state.edit_content;
+    let back_state = state.clone();
+    let cancel_state = state.clone();
+    let save_state = state.clone();
+    view()
+        .flex_1()
+        .flex_col()
+        .p_6()
+        .gap_4()
+        .child(
+            view()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .child(
+                    view()
+                        .on_press(move |_event: &PressEvent| cancel_clip_editor(&back_state))
+                        .px_2()
+                        .py_1()
+                        .rounded(px(7.0))
+                        .bg(theme::card())
+                        .border_1()
+                        .border_color(theme::border())
+                        .cursor_pointer()
+                        .child(
+                            text("←")
+                                .text_size(px(13.0))
+                                .text_color(theme::fg()),
+                        ),
+                )
+                .child(
+                    text(t!("editor.title"))
+                        .text_size(px(11.0))
+                        .text_color(theme::muted_fg()),
+                ),
+        )
+        .child(
+            view()
+                .flex_1()
+                .flex_col()
+                .rounded(px(8.0))
+                .bg(theme::glass_card())
+                .border_1()
+                .border_color(theme::border())
+                .p_3()
+                .child(
+                    input()
+                        .test_id("clip-body")
+                        .multiline(true)
+                        .flex_1()
+                        .value(content)
+                        .on_change(move |value: &str| content.set(value.to_string()))
+                        .text_size(px(13.0))
+                        .text_color(theme::fg())
+                        .auto_focus(true),
+                ),
+        )
+        .child(
+            text(t!("editor.hint"))
+                .text_size(px(11.0))
+                .text_color(theme::muted_fg()),
+        )
+        .child(
+            view()
+                .flex_row()
+                .justify_end()
+                .gap_2()
+                .child(editor_button(t!("editor.cancel"), false, move || {
+                    cancel_clip_editor(&cancel_state)
+                }))
+                .child(editor_button(t!("editor.save"), true, move || {
+                    save_clip_editor(&save_state)
+                })),
+        )
 }
 
 /// 进入片段编辑态：`existing` 为 `Some` 时编辑它，`content` 为预填正文。
@@ -601,98 +670,6 @@ fn save_snippet(state: &State) {
             flash(state, t!("snippet.failed"));
         }
     }
-}
-
-fn edit_content(clip: Clip) -> impl IntoElement {
-    let text_value = signal(clip.content.clone().unwrap_or_default());
-    let notice = signal(None::<String>);
-    let store = crate::history::init();
-
-    let save_store = store;
-    let save_text = text_value;
-    let save_notice = notice;
-    let save_id = clip.id;
-    let save = move || {
-        let Some(store) = save_store.as_deref() else {
-            return;
-        };
-        match store.update_text(save_id, &save_text.get()) {
-            Ok(()) => {
-                crate::history::bump();
-                crate::show_panel();
-                close_editor();
-            }
-            Err(e) => {
-                log::error!("update clip: {e}");
-                save_notice.set(Some(t!("editor.duplicate")));
-            }
-        }
-    };
-
-    let cancel = || {
-        crate::show_panel();
-        close_editor();
-    };
-    let input_text = text_value;
-
-    view()
-        .flex_1()
-        .flex_col()
-        .macos_backdrop(glass_backdrop())
-        .bg(theme::glass_bg())
-        .text_color(theme::fg())
-        .p_4()
-        .gap_3()
-        .child(
-            text(t!("editor.title"))
-                .text_size(px(13.0))
-                .text_color(theme::muted_fg()),
-        )
-        .child(
-            view()
-                .flex_1()
-                .flex_col()
-                .rounded(px(8.0))
-                .bg(theme::glass_card())
-                .border_1()
-                .border_color(theme::border())
-                .p_3()
-                .child(
-                    input()
-                        .multiline(true)
-                        .flex_1()
-                        .value(input_text)
-                        .on_change(move |value: &str| input_text.set(value.to_string()))
-                        .on_key_press(move |key: &str| {
-                            if key == "Escape" {
-                                crate::show_panel();
-                                close_editor();
-                            }
-                        })
-                        .text_size(px(13.0))
-                        .text_color(theme::fg())
-                        .auto_focus(true),
-                ),
-        )
-        .child(dynamic(move || {
-            if let Some(message) = notice.get() {
-                text(message)
-                    .text_size(px(11.0))
-                    .text_color(theme::danger())
-            } else {
-                text(t!("editor.hint"))
-                    .text_size(px(11.0))
-                    .text_color(theme::muted_fg())
-            }
-        }))
-        .child(
-            view()
-                .flex_row()
-                .justify_end()
-                .gap_2()
-                .child(editor_button(t!("editor.cancel"), false, cancel))
-                .child(editor_button(t!("editor.save"), true, save)),
-        )
 }
 
 fn editor_button(
@@ -1332,7 +1309,15 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     });
     let s = state.clone();
     let db = store.clone();
-    on_key_with("enter", always(), move |_| {
+    let enter_options = || KeyOptions {
+        when: When::Always,
+        pass_through: true,
+        ..KeyOptions::default()
+    };
+    on_key_with("enter", enter_options(), move |_| {
+        if s.edit_clip.get().is_some() {
+            return;
+        }
         if s.editing.get() && s.placeholder_menu.get() {
             insert_placeholder(&s, s.placeholder_selected.get());
             return;
@@ -1358,6 +1343,10 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     let s = state.clone();
     let db = store.clone();
     on_key_with("mod+enter", always(), move |_| {
+        if s.edit_clip.get().is_some() {
+            save_clip_editor(&s);
+            return;
+        }
         if s.editing.get() && s.placeholder_menu.get() {
             insert_placeholder(&s, s.placeholder_selected.get());
             return;
@@ -1380,7 +1369,7 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
         if let Some(clip) = selected_clip(&s) {
             if matches!(clip.kind, ClipKind::Text | ClipKind::Link) {
                 s.actions_open.set(false);
-                open_editor(clip);
+                start_clip_editor(&s, clip);
             }
         }
     });
@@ -1446,6 +1435,10 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     });
     let s = state.clone();
     on_key_with("escape", always(), move |_| {
+        if s.edit_clip.get().is_some() {
+            cancel_clip_editor(&s);
+            return;
+        }
         if s.editing.get() && s.placeholder_menu.get() {
             s.placeholder_menu.set(false);
             return;
@@ -1463,7 +1456,9 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     // ⌘S：历史里把选中条目存成片段；片段模式下新建。
     let save_state = state.clone();
     on_key("mod+s", move |_| {
-        if save_state.editing.get() {
+        if save_state.edit_clip.get().is_some() {
+            save_clip_editor(&save_state);
+        } else if save_state.editing.get() {
             save_snippet(&save_state);
         } else if save_state.source.get() == Source::History {
             let content = selected_clip(&save_state)
@@ -1791,7 +1786,7 @@ fn run_action(state: &State, store: Option<&Store>, kind: ActionKind) {
             if let Some(clip) = selected_clip(state) {
                 if matches!(clip.kind, ClipKind::Text | ClipKind::Link) {
                     state.actions_open.set(false);
-                    open_editor(clip);
+                    start_clip_editor(state, clip);
                 }
             }
         }
