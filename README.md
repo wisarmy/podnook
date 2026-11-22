@@ -2,7 +2,7 @@
 
 > A pod for everything you keep. / 把每件你在乎的事，都收进一只豆荚。
 
-A local-first, open-source **clipboard history** for macOS. Everything you copy stays on your Mac: summon it with one hotkey, search, pin, and paste it back into any app. Nothing is uploaded.
+A local-first, open-source **clipboard history and snippet library** for macOS. Everything you copy stays on your Mac: summon it with one hotkey, search, pin, and paste it back into any app; save the text you reuse as snippets. Nothing is uploaded.
 
 Product context and decisions live in [`CONTEXT.md`](CONTEXT.md); architecture decisions in [`docs/adr/`](docs/adr/).
 
@@ -171,7 +171,7 @@ See [`LICENSE`](LICENSE).
 
 # 中文
 
-本地优先、开源的 macOS **剪贴板历史**工具。复制过的一切留在本机，一个快捷键召回、搜索、粘回，绝不上传。
+本地优先、开源的 macOS **剪贴板历史与片段库**。复制过的一切留在本机，一个快捷键召回、搜索、粘回，绝不上传；常用的文本存成片段，随时复用。
 
 界面跟随系统语言，可在设置 →「语言」里切换。
 
