@@ -33,6 +33,10 @@ const size = { width: 1120, height: 630, platform: "macos" as const };
 
 test("panel", async () => {
   const app = await open(".", size);
+  await app.wait(500);
+  // 封面用置顶的图片条目：预览区比一行文本更能说明这个工具在做什么。
+  await app.press("text:Image 1024×1024");
+  await app.wait(400);
   await app.window("panel").screenshot("$OUT/panel.png");
 });
 
