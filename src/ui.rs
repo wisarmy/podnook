@@ -1949,7 +1949,7 @@ fn move_selection(state: &State, delta: isize) {
 
 fn activate_selected(state: &State, store: Option<&Store>, paste: bool, plain: bool) {
     if state.source.get() == Source::Snippets {
-        activate_snippet(state, store, paste);
+        activate_snippet(state, store, paste, plain);
         return;
     }
     let Some(clip) = selected_clip(state) else {
@@ -2099,11 +2099,20 @@ fn selected_snippet(state: &State) -> Option<Snippet> {
         .find(|snippet| snippet.id == id)
 }
 
-fn activate_snippet(state: &State, store: Option<&Store>, paste: bool) {
+fn activate_snippet(state: &State, store: Option<&Store>, paste: bool, plain: bool) {
     let Some(snippet) = selected_snippet(state) else {
         return;
     };
     let text = crate::snippet_text::expand(&snippet.content);
+    #[cfg(target_os = "macos")]
+    if plain {
+        set_clipboard(text.clone());
+    } else {
+        // 片段按 Markdown 写：粘出富文本，⇧↵ 粘源码。
+        let html = markdown::to_html(&text).into_bytes();
+        crate::clipboard::write_text_formats(&text, &[("public.html".into(), html)]);
+    }
+    #[cfg(not(target_os = "macos"))]
     set_clipboard(text.clone());
 
     let auto_paste = store
@@ -3250,3 +3259,13 @@ mod delete_tests {
     }
 }
 
+
+#[cfg(test)]
+mod markdown_tests {
+    #[test]
+    fn snippets_convert_to_html() {
+        let html = markdown::to_html("**bold** and [link](https://nsh.dev)");
+        assert!(html.contains("<strong>bold</strong>"));
+        assert!(html.contains("<a href=\"https://nsh.dev\">"));
+    }
+}

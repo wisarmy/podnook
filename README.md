@@ -154,7 +154,8 @@ bundle id changes, or you switch machines (`tccutil reset Accessibility com.podn
   selected clip as a snippet, and in the snippets `⌘N` creates one, `⌘D`
   duplicates it and `⇧⌘P` pins it. Snippets understand `{date}`, `{time}`, `{datetime}` and `{weekday}`, or a
   custom `{date format="yyyy-MM-dd"}`; typing `{` in the editor opens the
-  placeholder menu. Editing a clip or a snippet happens in the panel, with
+  placeholder menu. Snippets are Markdown: `↵` pastes them as rich text and
+  `⇧↵` pastes the source. Editing a clip or a snippet happens in the panel, with
   `⌘S` or `⌘↵` to save and `Esc` to cancel. The hotkey always reopens the
   clipboard history. `⌫` only edits the search field.
 - Saving writes to `~/Downloads` by default; the path is editable in the actions
@@ -217,7 +218,8 @@ make install   # 打包 → 用固定身份重签 → 校验 → 安装到 /Appl
 `⌃⇧X` 清空全部、`⌘O` 打开链接/文件、`⇧⌘O` 在 Finder 中显示、`⌘,` 设置、`Esc` 收起。
 `⇧Tab`、`⌘1`、`⌘2` 都能切换历史与片段，也可以点左下角的图标切换；历史里 `⌘S` 把选中条目存成片段，片段里 `⌘N` 新建、`⌘D` 复制一份、`⇧⌘P` 置顶。
 片段支持 `{date}`、`{time}`、`{datetime}`、`{weekday}`，以及自定义格式
-`{date format="yyyy-MM-dd"}`；在正文里输入 `{` 会弹出占位符菜单。编辑条目或片段都在面板内
+`{date format="yyyy-MM-dd"}`；在正文里输入 `{` 会弹出占位符菜单。片段按 Markdown 写，
+`↵` 粘成富文本，`⇧↵` 粘源码。编辑条目或片段都在面板内
 完成，`⌘S` / `⌘↵` 保存、`Esc` 取消。呼出热键总是回到历史。
 
 片段库把常用文本存成本机数据，搜索后回车粘贴；不监听全局键盘，也不新增权限。

@@ -197,7 +197,7 @@ snippet:
   datetime: "日期与时间"
   weekday: "星期"
   custom_format: "自定义格式"
-  hint: "输入 { 插入日期或时间占位符"
+  hint: "支持 Markdown；输入 { 插入日期或时间占位符"
   empty: "片段内容不能为空"
   failed: "保存片段失败"
 

@@ -197,7 +197,7 @@ snippet:
   datetime: "Date & Time"
   weekday: "Weekday"
   custom_format: "Custom Format"
-  hint: "Type { to insert a date or time placeholder"
+  hint: "Markdown supported; type { to insert a date or time placeholder"
   empty: "The snippet cannot be empty"
   failed: "Could not save the snippet"
 

@@ -1848,6 +1848,7 @@ dependencies = [
  "env_logger",
  "jiff",
  "log",
+ "markdown",
  "nsh-base",
  "nsh-core",
  "nsh-platform-macos",
