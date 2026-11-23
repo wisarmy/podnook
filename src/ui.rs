@@ -2844,7 +2844,11 @@ fn markdown_blocks(content: &str) -> Vec<nsh_core::element::AnyElement> {
                             .flex_1()
                             .flex_row()
                             .flex_wrap()
-                            .children(preview_runs(&strip_inline(body))),
+                            .children(preview_runs_styled(
+                                &strip_inline(body),
+                                14.0,
+                                FontWeight::NORMAL,
+                            )),
                     )
                     .into_element(),
             );
@@ -2861,7 +2865,11 @@ fn markdown_blocks(content: &str) -> Vec<nsh_core::element::AnyElement> {
                         view()
                             .flex_row()
                             .flex_wrap()
-                            .children(preview_runs(&strip_inline(rest))),
+                            .children(preview_runs_styled(
+                                &strip_inline(rest),
+                                14.0,
+                                FontWeight::NORMAL,
+                            )),
                     )
                     .into_element(),
             );
@@ -2872,10 +2880,7 @@ fn markdown_blocks(content: &str) -> Vec<nsh_core::element::AnyElement> {
             view()
                 .flex_row()
                 .flex_wrap()
-                .children(preview_runs(&strip_inline(body)))
-                .when(weight != FontWeight::NORMAL, |row| {
-                    row.text_size(px(size)).font_weight(weight)
-                })
+                .children(preview_runs_styled(&strip_inline(body), size, weight))
                 .into_element(),
         );
     }
@@ -2935,11 +2940,23 @@ fn strip_inline(text: &str) -> String {
 
 /// 分段渲染时文本节点会吞掉首尾空格，段与段之间用一个固定宽度的空白单元补上。
 fn preview_runs(content: &str) -> Vec<nsh_core::element::AnyElement> {
+    preview_runs_styled(content, 14.0, FontWeight::NORMAL)
+}
+
+fn preview_runs_styled(
+    content: &str,
+    size: f32,
+    weight: FontWeight,
+) -> Vec<nsh_core::element::AnyElement> {
     let mut runs = Vec::new();
     for piece in crate::snippet_text::render(content) {
         match piece {
             crate::snippet_text::Piece::Value(value) => {
-                runs.push(text_(value).text_color(theme::primary()).into_element());
+                runs.push(
+                    text_(value, size, weight)
+                        .text_color(theme::primary())
+                        .into_element(),
+                );
             }
             crate::snippet_text::Piece::Text(text) => {
                 let mut body = text.as_str();
@@ -2950,7 +2967,7 @@ fn preview_runs(content: &str) -> Vec<nsh_core::element::AnyElement> {
                 let trailing = body.ends_with(' ');
                 let body = body.trim_end_matches(' ');
                 if !body.is_empty() {
-                    runs.push(text_(body.to_string()).into_element());
+                    runs.push(text_(body.to_string(), size, weight).into_element());
                 }
                 if trailing {
                     runs.push(view().size(px(5.0)).into_element());
@@ -2961,10 +2978,11 @@ fn preview_runs(content: &str) -> Vec<nsh_core::element::AnyElement> {
     runs
 }
 
-fn text_(content: String) -> nsh_core::element::Text {
+fn text_(content: String, size: f32, weight: FontWeight) -> nsh_core::element::Text {
     text(content)
         .selectable(true)
-        .text_size(px(14.0))
+        .text_size(px(size))
+        .font_weight(weight)
         .text_color(theme::fg())
 }
 
