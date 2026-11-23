@@ -1394,7 +1394,7 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     });
     let s = state.clone();
     let db = store.clone();
-    on_key_with("alt+enter", always(), move |_| {
+    on_key_with("shift+enter", always(), move |_| {
         activate_selected(&s, db.as_deref(), true, true);
     });
     // Raycast 对齐：固定是 ⇧⌘P；⌘. 留给 Append to Clipboard。
@@ -1689,7 +1689,7 @@ fn action_items(state: &State) -> Vec<ActionItem> {
             ActionItem {
                 kind: ActionKind::PastePlain,
                 label: t!("action.paste_plain"),
-                shortcut: "alt+enter",
+                shortcut: "shift+enter",
                 destructive: false,
             },
             ActionItem {
