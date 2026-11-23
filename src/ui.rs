@@ -411,6 +411,7 @@ fn snippet_form(state: State) -> impl IntoElement {
                     input()
                         .test_id("snippet-name")
                         .value(name)
+                        .auto_correct(false)
                         .on_change(move |value: &str| name.set(value.to_string()))
                         .placeholder(t!("snippet.name"))
                         .text_size(px(13.0))
@@ -449,6 +450,7 @@ fn snippet_form(state: State) -> impl IntoElement {
                                 .multiline(true)
                                 .flex_1()
                                 .value(content)
+                                .auto_correct(false)
                                 .on_change(move |value: &str| {
                                     content.set(value.to_string());
                                     if value.ends_with('{') {
@@ -479,6 +481,7 @@ fn snippet_form(state: State) -> impl IntoElement {
                     input()
                         .test_id("snippet-keyword")
                         .value(keyword)
+                        .auto_correct(false)
                         .on_change(move |value: &str| keyword.set(value.to_string()))
                         .placeholder(t!("snippet.keyword_placeholder"))
                         .text_size(px(13.0))
@@ -596,6 +599,7 @@ fn clip_form(state: State) -> impl IntoElement {
                         .multiline(true)
                         .flex_1()
                         .value(content)
+                        .auto_correct(false)
                         .on_change(move |value: &str| content.set(value.to_string()))
                         .text_size(px(13.0))
                         .text_color(theme::fg())
@@ -2282,6 +2286,7 @@ fn search_box(state: State) -> impl IntoElement {
                 .element_ref(&search)
                 .value(query)
                 .on_change(move |value: &str| query.set(value.to_string()))
+                .auto_correct(false)
                 .placeholder(move || if state.source.get() == Source::Snippets { t!("panel.search_snippets") } else { t!("panel.search") })
                 .placeholder_color(rgb(0x8A8178))
                 .text_color(theme::fg())

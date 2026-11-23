@@ -14,8 +14,8 @@ debug = 0
 
 [dependencies]
 markdown = "1.0"
-nsh-core = "=0.5.0"
-nsh-base = "=0.5.0"
+nsh-core = "=0.5.1"
+nsh-base = "=0.5.1"
 env_logger = "0.11"
 podnook-core = { path = "core" }
 log = "0.4.35"
@@ -30,4 +30,4 @@ serde_json = "1.0.154"
 block2 = "0.6"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-nsh-platform-macos = { version = "=0.5.0", default-features = false, features = ["shader", "editor", "emoji-picker", "highlight", "math", "plot", "rich-editor", "term"] }
+nsh-platform-macos = { version = "=0.5.1", default-features = false, features = ["shader", "editor", "emoji-picker", "highlight", "math", "plot", "rich-editor", "term"] }

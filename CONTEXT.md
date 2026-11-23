@@ -43,7 +43,7 @@ v0.1 只做剪贴板历史；Podnook 之后可以长成「多功能个人工具�
 ## 关键决策
 
 - **开源、本地封闭、绝不上传。**
-- **技术栈：Native Shell（NSH）v0.5.0 + 纯 Rust。** 无 TSX、无 QuickJS。详见 `docs/adr/0001-nsh-pure-rust.md`。
+- **技术栈：Native Shell（NSH）v0.5.1 + 纯 Rust。** 无 TSX、无 QuickJS。详见 `docs/adr/0001-nsh-pure-rust.md`。
 - **系统集成在 Rust 侧自己补**：NSH 不提供剪贴板监听、按键注入、开机自启、SQLite——分别用 `NSPasteboard` 轮询、`CGEventPost`、`SMAppService`、`rusqlite`。
 - **界面中英双语**，深色默认跟随系统；文案全部在 `locales/en.yml` 与 `locales/zh.yml`
   （NSH 自带的 `t!` + rust-i18n 格式），`src/` 里不允许出现中文界面文本。
@@ -82,10 +82,10 @@ v0.1 只做剪贴板历史；Podnook 之后可以长成「多功能个人工具�
 
 ## NSH 版本与文档纪律
 
-- **锁定 NSH v0.5.0**（2026-11-11 发布）。托盘、全局热键、非激活浮层窗口都在这个版本，0.4 没有。
-- 官方文档站 `nsh.dev/modules/*` 仍停留在 0.4，**一律以 tag `v0.5.0` 的 repo 文档为准**：
-  `https://raw.githubusercontent.com/longbridge/nsh/v0.5.0/website/...`
-- 安装用官方 `install.sh` 或 v0.5.0 的 `nsh-macos-arm64.tar.gz`；**不要用 Homebrew**（当前只到 0.4.0 且仅 arm64）。
+- **锁定 NSH v0.5.1**（2026-11-11 发布）。托盘、全局热键、非激活浮层窗口都在这个版本，0.4 没有。
+- 官方文档站 `nsh.dev/modules/*` 仍停留在 0.4，**一律以 tag `v0.5.1` 的 repo 文档为准**：
+  `https://raw.githubusercontent.com/longbridge/nsh/v0.5.1/website/...`
+- 安装用官方 `install.sh` 或 v0.5.1 的 `nsh-macos-arm64.tar.gz`；**不要用 Homebrew**（当前只到 0.4.0 且仅 arm64）。
 - 升级 nsh 前必须重读对应 tag 的文档；0.5 有破坏性改动且尚未建立兼容基线。
 - `nsh-*` 依赖版本必须与 CLI 版本一致。
 
@@ -129,7 +129,7 @@ v0.1 只做剪贴板历史；Podnook 之后可以长成「多功能个人工具�
 
 ## 已知风险
 
-1. NSH 0.5 刚发布、文档滞后、API 可能破坏性变动 → 锁版本 + 读 v0.5.0 文档。
+1. NSH 0.5 刚发布、文档滞后、API 可能破坏性变动 → 锁版本 + 读 v0.5.1 文档。
 2. Carbon 全局热键是独占的，选键要避开系统/常用 App 快捷键。
 3. 辅助功能权限可能被拒绝 → 降级为「仅复制」必须无感可用。
 4. `SMAppService` 要求代码签名；已改用固定的本机自签名身份，若登录项仍被拒绝 → 回退 `~/Library/LaunchAgents`。

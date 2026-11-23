@@ -36,26 +36,26 @@ language and can be switched in Settings.
 
 ## Tech stack
 
-- [Native Shell](https://nsh.dev) **v0.5.0** (pinned) + pure Rust, no TSX / QuickJS
+- [Native Shell](https://nsh.dev) **v0.5.1** (pinned) + pure Rust, no TSX / QuickJS
 - System layer: `NSPasteboard` polling, `CGEventPost` paste-back, `SMAppService` login item
 - Storage: `rusqlite` (`history.db`) plus an image file cache
 - Text: `locales/en.yml` and `locales/zh.yml` (rust-i18n format, loaded by NSH)
 
-> ⚠️ NSH 0.5 is new and the documentation site still describes 0.4. **The repo docs at tag `v0.5.0` are authoritative**:
-> `https://raw.githubusercontent.com/longbridge/nsh/v0.5.0/website/...`
+> ⚠️ NSH 0.5 is new and the documentation site still describes 0.4. **The repo docs at tag `v0.5.1` are authoritative**:
+> `https://raw.githubusercontent.com/longbridge/nsh/v0.5.1/website/...`
 
 ## Requirements
 
 - macOS 14+
 - Rust (edition 2024)
-- NSH CLI **v0.5.0**
+- NSH CLI **v0.5.1**
 
-Install the NSH CLI (**not Homebrew**, which only has v0.4.0). The v0.5.0 macOS CLI ships as an arm64 archive only; on an Intel Mac download the release archive instead:
+Install the NSH CLI (**not Homebrew**, which only has v0.4.0). The v0.5.1 macOS CLI ships as an arm64 archive only; on an Intel Mac download the release archive instead:
 
 ```sh
 curl -fsSL https://nsh.dev/install.sh | sh
-# or the v0.5.0 archive:
-# https://github.com/longbridge/nsh/releases/download/v0.5.0/nsh-macos-arm64.tar.gz
+# or the v0.5.1 archive:
+# https://github.com/longbridge/nsh/releases/download/v0.5.1/nsh-macos-arm64.tar.gz
 ```
 
 ## Development
