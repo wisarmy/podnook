@@ -13,7 +13,6 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use nsh_base::input;
-use nsh_core::element::desktop::{open_window, window as panel_window, WindowRef};
 use nsh_core::keymap::When;
 use nsh_core::prelude::*;
 use nsh_core::{
@@ -2785,18 +2784,153 @@ fn snippet_preview(state: State) -> impl IntoElement {
                 )
                 .child(
                     scroll().flex_1().child(
-                        view().px_6().py_2().child(
-                            view()
-                                .flex_row()
-                                .flex_wrap()
-                                .children(preview_runs(&snippet.content)),
-                        ),
+                        view()
+                            .flex_col()
+                            .gap_2()
+                            .px_6()
+                            .py_2()
+                            .children(markdown_blocks(&snippet.content)),
                     ),
                 )
                 ;
         }
     }
     root
+}
+
+/// 片段预览的 Markdown 渲染：块级结构（标题、列表、代码、引用）用样式区分，
+/// 行内标记去掉符号，占位符的值仍然高亮。
+fn markdown_blocks(content: &str) -> Vec<nsh_core::element::AnyElement> {
+    let mut blocks: Vec<nsh_core::element::AnyElement> = Vec::new();
+    let mut code: Option<String> = None;
+
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            match code.take() {
+                Some(text) => blocks.push(code_block(text)),
+                None => code = Some(String::new()),
+            }
+            continue;
+        }
+        if let Some(text) = code.as_mut() {
+            text.push_str(line);
+            text.push('\n');
+            continue;
+        }
+        if trimmed.is_empty() {
+            continue;
+        }
+        let (size, weight, body) = if let Some(rest) = trimmed.strip_prefix("### ") {
+            (15.0, FontWeight::SEMIBOLD, rest)
+        } else if let Some(rest) = trimmed.strip_prefix("## ") {
+            (17.0, FontWeight::SEMIBOLD, rest)
+        } else if let Some(rest) = trimmed.strip_prefix("# ") {
+            (19.0, FontWeight::BOLD, rest)
+        } else {
+            (14.0, FontWeight::NORMAL, trimmed)
+        };
+
+        if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
+            let body = trimmed.trim_start_matches(['-', '*', ' ']);
+            blocks.push(
+                view()
+                    .flex_row()
+                    .items_start()
+                    .gap_2()
+                    .child(text("•").text_size(px(14.0)).text_color(theme::muted_fg()))
+                    .child(
+                        view()
+                            .flex_1()
+                            .flex_row()
+                            .flex_wrap()
+                            .children(preview_runs(&strip_inline(body))),
+                    )
+                    .into_element(),
+            );
+            continue;
+        }
+
+        if let Some(rest) = trimmed.strip_prefix("> ") {
+            blocks.push(
+                view()
+                    .pl_3()
+                    .border_l(px(2.0))
+                    .border_l_color(theme::border())
+                    .child(
+                        view()
+                            .flex_row()
+                            .flex_wrap()
+                            .children(preview_runs(&strip_inline(rest))),
+                    )
+                    .into_element(),
+            );
+            continue;
+        }
+
+        blocks.push(
+            view()
+                .flex_row()
+                .flex_wrap()
+                .children(preview_runs(&strip_inline(body)))
+                .when(weight != FontWeight::NORMAL, |row| {
+                    row.text_size(px(size)).font_weight(weight)
+                })
+                .into_element(),
+        );
+    }
+
+    if let Some(text) = code {
+        blocks.push(code_block(text));
+    }
+    blocks
+}
+
+fn code_block(code: String) -> nsh_core::element::AnyElement {
+    view()
+        .w_full()
+        .p_3()
+        .rounded(px(8.0))
+        .bg(theme::glass_card())
+        .border_1()
+        .border_color(theme::border())
+        .child(
+            text(code.trim_end().to_string())
+                .text_size(px(12.0))
+                .text_color(theme::fg()),
+        )
+        .into_element()
+}
+
+/// 去掉行内 Markdown 标记：预览里不显示 `**`、反引号和链接语法。
+fn strip_inline(text: &str) -> String {
+    let mut out = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '*' | '`' | '~' => {}
+            '[' => {
+                let mut label = String::new();
+                for c in chars.by_ref() {
+                    if c == ']' {
+                        break;
+                    }
+                    label.push(c);
+                }
+                out.push_str(&label);
+                // 丢掉后面的 (url)
+                if chars.peek() == Some(&'(') {
+                    for c in chars.by_ref() {
+                        if c == ')' {
+                            break;
+                        }
+                    }
+                }
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 /// 分段渲染时文本节点会吞掉首尾空格，段与段之间用一个固定宽度的空白单元补上。
