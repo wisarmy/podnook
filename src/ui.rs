@@ -1335,7 +1335,7 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
             return;
         }
         if s.editing.get() {
-            save_snippet(&s);
+            // 正文是多行输入框：Enter 交给它换行，保存用 ⌘↵ / ⌘S。
             return;
         }
         if s.actions_open.get() {
