@@ -137,6 +137,9 @@ bundle id changes, or you switch machines (`tccutil reset Accessibility com.podn
 - By default only the system Passwords app is ignored. Add other sources in
   Settings with “Choose app…” (running apps) or by bundle id; metadata shows
   copy count and text size.
+- Clipboard entries keep the formats the source provided: pasting writes the
+  copied HTML/RTF back, so rich text and Markdown previews keep their styling.
+  `⌥↵` pastes plain text, and Settings can make plain text the default.
 - **Accessibility**: used only for paste-back (it posts ⌘V). Without it the app
   falls back to copying only, and Settings offers “Request access”.
 - No Dock icon: it lives in the menu bar. The default hotkey is **⌘⇧V**; the
@@ -204,6 +207,8 @@ make install   # 打包 → 用固定身份重签 → 校验 → 安装到 /Appl
 
 - 数据目录：`~/Library/Application Support/com.podnook.app/`（`history.db` 与 `images/`）。
 - 默认只忽略系统「密码」App；其它来源可在设置里点「选择 App…」添加，或手动填 bundle id。
+- 条目会保留来源提供的格式：粘贴时写回捕获到的 HTML/RTF，富文本与 Markdown 预览的样式不会丢；
+  `⌥↵` 按纯文本粘贴，也可以在设置里把纯文本设为默认。
 - 辅助功能权限仅用于「粘回」（模拟 ⌘V）；未授权时自动降级为「仅复制」。
 - 应用无 Dock 图标，常驻菜单栏；默认热键 **⌘⇧V**（可在设置里录制修改）。
 

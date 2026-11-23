@@ -48,6 +48,7 @@ editor:
 action:
   paste: "粘贴"
   copy: "仅复制"
+  paste_plain: "粘贴为纯文本"
   edit: "编辑内容"
   pin: "固定"
   unpin: "取消固定"
@@ -133,6 +134,8 @@ settings:
   clear_confirm: "确认清空"
   paste: "粘贴"
   auto_paste: "自动粘回"
+  prefer_plain: "优先粘贴纯文本"
+  prefer_plain_note: "粘贴时只写纯文本，不写回 HTML/RTF；⌥↵ 始终按纯文本粘贴。"
   auto_paste_note: "关闭后，回车只把条目复制回剪贴板，不模拟 ⌘V。"
   login_section: "登录项"
   launch_at_login: "开机自启"

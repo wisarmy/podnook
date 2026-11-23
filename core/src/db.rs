@@ -40,6 +40,12 @@ CREATE TABLE IF NOT EXISTS clips (
 );
 CREATE INDEX IF NOT EXISTS clips_order ON clips(pinned DESC, last_copied_at DESC);
 CREATE INDEX IF NOT EXISTS clips_age ON clips(last_copied_at);
+CREATE TABLE IF NOT EXISTS clip_formats (
+  clip_id INTEGER NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
+  kind    TEXT    NOT NULL,
+  bytes   BLOB    NOT NULL,
+  PRIMARY KEY (clip_id, kind)
+);
 CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -120,7 +126,7 @@ impl Store {
             rusqlite::Error::InvalidParameterName(format!("create data dir: {e}"))
         })?;
         let conn = Connection::open(dir.join("history.db"))?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;")?;
         conn.execute_batch(SCHEMA)?;
         migrate(&conn)?;
         Ok(Self {
@@ -228,6 +234,20 @@ impl Store {
             None => (None, None),
         };
 
+        // 富文本的原始表示随正文一起入库，每个表示最多 256 KB。
+        const FORMAT_LIMIT: usize = 256 * 1024;
+        let mut formats = Vec::new();
+        for (kind_name, bytes) in [
+            ("public.html", snapshot.html.as_ref()),
+            ("public.rtf", snapshot.rtf.as_ref()),
+        ] {
+            if let Some(bytes) = bytes {
+                if !bytes.is_empty() && bytes.len() <= FORMAT_LIMIT {
+                    formats.push((kind_name.to_string(), bytes.clone()));
+                }
+            }
+        }
+
         let clip = NewClip {
             kind,
             content,
@@ -246,9 +266,24 @@ impl Store {
             source_bundle: snapshot.source_bundle.clone(),
             byte_size,
             truncated,
+            formats,
         };
 
         let upsert = self.upsert(&clip, now)?;
+        if !clip.formats.is_empty() {
+            let id: Option<i64> = {
+                let conn = self.lock();
+                conn.query_row(
+                    "SELECT id FROM clips WHERE hash = ?1",
+                    params![clip.hash],
+                    |row| row.get(0),
+                )
+                .optional()?
+            };
+            if let Some(id) = id {
+                self.replace_formats(id, &clip.formats)?;
+            }
+        }
         let (count, days) = self.retention()?;
         let _ = self.prune_with(now, count, days);
         log::info!(
@@ -550,6 +585,30 @@ impl Store {
 }
 
 impl Store {
+    /// 一条剪辑保留的原始表示（`public.html`、`public.rtf` 等）。
+    pub fn formats_for(&self, id: i64) -> rusqlite::Result<Vec<(String, Vec<u8>)>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT kind, bytes FROM clip_formats WHERE clip_id = ?1 ORDER BY kind",
+        )?;
+        let rows = stmt.query_map(params![id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+        })?;
+        rows.collect()
+    }
+
+    fn replace_formats(&self, id: i64, formats: &[(String, Vec<u8>)]) -> rusqlite::Result<()> {
+        let conn = self.lock();
+        conn.execute("DELETE FROM clip_formats WHERE clip_id = ?1", params![id])?;
+        for (kind, bytes) in formats {
+            conn.execute(
+                "INSERT OR REPLACE INTO clip_formats (clip_id, kind, bytes) VALUES (?1, ?2, ?3)",
+                params![id, kind, bytes],
+            )?;
+        }
+        Ok(())
+    }
+
     /// 片段库，最近使用的在前。
     pub fn list_snippets(&self) -> rusqlite::Result<Vec<Snippet>> {
         let conn = self.lock();
@@ -985,5 +1044,62 @@ mod snippet_tests {
 
         store.delete_snippet(id).unwrap();
         assert!(store.list_snippets().unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod format_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn store() -> Store {
+        let dir = std::env::temp_dir().join(format!(
+            "podnook-formats-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        Store::open_in_memory(dir).unwrap()
+    }
+
+    fn rich(text: &str) -> Snapshot {
+        Snapshot {
+            text: Some(text.into()),
+            html: Some(b"<b>hi</b>".to_vec()),
+            rtf: Some(b"{\\rtf1 hi}".to_vec()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn keeps_and_returns_original_formats() {
+        let store = store();
+        store.capture(rich("hi"), 1).unwrap();
+        let clip = store.list(1).unwrap().remove(0);
+        let formats = store.formats_for(clip.id).unwrap();
+        assert_eq!(formats.len(), 2);
+        assert!(formats.iter().any(|(kind, bytes)| kind == "public.html" && bytes == b"<b>hi</b>"));
+    }
+
+    #[test]
+    fn drops_oversized_formats_but_keeps_text() {
+        let store = store();
+        let mut snapshot = rich("big");
+        snapshot.html = Some(vec![b'x'; 300 * 1024]);
+        store.capture(snapshot, 1).unwrap();
+        let clip = store.list(1).unwrap().remove(0);
+        let formats = store.formats_for(clip.id).unwrap();
+        assert!(formats.iter().all(|(kind, _)| kind != "public.html"));
+        assert!(formats.iter().any(|(kind, _)| kind == "public.rtf"));
+    }
+
+    #[test]
+    fn deleting_a_clip_drops_its_formats() {
+        let store = store();
+        store.capture(rich("bye"), 1).unwrap();
+        let clip = store.list(1).unwrap().remove(0);
+        store.delete(clip.id).unwrap();
+        assert!(store.formats_for(clip.id).unwrap().is_empty());
     }
 }

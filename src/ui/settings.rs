@@ -12,6 +12,8 @@ use podnook_core::{
 
 use nsh_platform_macos::objc2_app_kit::{NSApplicationActivationPolicy, NSWorkspace};
 
+use podnook_core::SETTING_PLAIN_PASTE;
+
 use crate::{login_item, settings as prefs, theme};
 
 /// 设置窗口的状态：信号与元素引用跨重绘保留，语言切换只重建视图。
@@ -24,6 +26,7 @@ struct SettingsState {
     count: Signal<i64>,
     days: Signal<i64>,
     auto_paste: Signal<bool>,
+    plain_paste: Signal<bool>,
     login: Signal<bool>,
     login_label: Signal<String>,
     ignored: Signal<Vec<String>>,
@@ -50,6 +53,7 @@ impl SettingsState {
             count: signal(config.retention_count),
             days: signal(config.retention_days),
             auto_paste: signal(config.auto_paste),
+            plain_paste: signal(config.plain_paste),
             login: signal(login_item::status().is_on()),
             login_label: signal(login_item::status().label().to_string()),
             ignored: signal(config.ignored_bundles.clone()),
@@ -151,6 +155,7 @@ fn settings_ui(state: SettingsState) -> View {
         count,
         days,
         auto_paste,
+        plain_paste,
         login,
         login_label,
         ignored,
@@ -354,6 +359,15 @@ fn settings_ui(state: SettingsState) -> View {
                 }
             }
         }));
+
+    let store_for_plain = store.clone();
+    let plain_toggle = toggle_control(plain_paste, move |on| {
+        plain_paste.set(on);
+        if let Some(store) = &store_for_plain {
+            prefs::write_bool(store, SETTING_PLAIN_PASTE, on);
+        }
+        show_notice(notice, t!("notice.saved"));
+    });
 
     let permission_row = view()
         .flex_row()
@@ -608,6 +622,12 @@ fn settings_ui(state: SettingsState) -> View {
         .child(setting_row(t!("settings.auto_paste"), auto_toggle))
         .child(view().px_4().pb_3().child(
             text(t!("settings.auto_paste_note"))
+                .text_size(px(11.0))
+                .text_color(theme::muted_fg()),
+        ))
+        .child(setting_row(t!("settings.prefer_plain"), plain_toggle))
+        .child(view().px_4().pb_3().child(
+            text(t!("settings.prefer_plain_note"))
                 .text_size(px(11.0))
                 .text_color(theme::muted_fg()),
         ));

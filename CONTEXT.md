@@ -69,6 +69,8 @@ v0.1 只做剪贴板历史；Podnook 之后可以长成「多功能个人工具�
 - **App 图标**：W4 方案——浅暖底 + 陶土色弯曲豆荚 + 三颗豌豆 + 短茎叶，大面积留白；`assets/icon.svg` 为源，`assets/icon.png`（1024）随 `nsh package` 生成 `AppIcon.icns`；托盘用同符号的单色模板。
 - **分层**：领域模型、捕获规则与 SQLite 在独立的 `podnook-core` crate（不依赖 NSH/AppKit），应用层只负责把 `NSPasteboard` 快照喂进来；`cargo test -p podnook-core` 可快速跑完。
 - **编辑都在面板内**：片段和剪贴板条目的编辑表单整块替换列表（返回、正文、保存），不再开独立窗口；避免主面板消失，也避开 NSH 关窗后同 id 重开的坑。
+- **剪贴板保留原始格式**：文本条目同时存 `public.html` / `public.rtf`（每条上限 256 KB，超限只留纯文本），
+  粘贴时写回原格式；`⌥↵` 粘贴为纯文本，设置里可把纯文本设为默认。片段仍是纯文本。
 - **片段与历史同面板**：用 `Source`（History / Snippets）切换，而不是第二个窗口或全局
   关键字展开；片段存 `snippets` 表，不受保留期清理。
 - **`Clip.preview` 只存文本内容的第一行**；图片与文件条目的单行标题由 UI 按当前语言
@@ -99,7 +101,7 @@ v0.1 只做剪贴板历史；Podnook 之后可以长成「多功能个人工具�
 
 ## 明确不做（v2 清单）
 
-- 颜色类型、HTML/RTF 格式保留、OCR、多选、智能排序、FTS5。
+- 颜色类型、OCR、多选、智能排序、FTS5。
 - Developer ID 签名与公证（v0.1 用固定自签名 + Gatekeeper 手动放行）、自动更新。
 - Podnook 的其它模块（todo、摘抄等）。
 - 同步、账号、任何联网功能。

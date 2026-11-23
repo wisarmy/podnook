@@ -13,7 +13,6 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use nsh_base::input;
-use nsh_core::desktop::{WindowAttributes, WindowKind, WindowLevel, Workspaces};
 use nsh_core::element::desktop::{open_window, window as panel_window, WindowRef};
 use nsh_core::keymap::When;
 use nsh_core::prelude::*;
@@ -24,6 +23,7 @@ use nsh_core::{
 use podnook_core::db::Store;
 use podnook_core::{
     hash_text, now_secs, preview_for_text, Clip, ClipKind, Snippet, SETTING_AUTO_PASTE,
+    SETTING_PLAIN_PASTE,
 };
 
 use crate::theme;
@@ -193,6 +193,7 @@ enum ActionKind {
     NewSnippet,
     PinSnippet,
     DuplicateSnippet,
+    PastePlain,
 }
 
 #[derive(Clone)]
@@ -1348,7 +1349,8 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
                 }
             }
         } else {
-            activate_selected(&s, db.as_deref(), true);
+            let plain = prefer_plain(db.as_deref());
+            activate_selected(&s, db.as_deref(), true, plain);
         }
     });
     let s = state.clone();
@@ -1366,7 +1368,7 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
             save_snippet(&s);
             return;
         }
-        activate_selected(&s, db.as_deref(), false)
+        activate_selected(&s, db.as_deref(), false, false)
     });
     let s = state.clone();
     on_key_with("mod+e", always(), move |_| {
@@ -1389,6 +1391,11 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
         if selected_clip(&s).is_some() {
             enter_save_mode(&s);
         }
+    });
+    let s = state.clone();
+    let db = store.clone();
+    on_key_with("alt+enter", always(), move |_| {
+        activate_selected(&s, db.as_deref(), true, true);
     });
     // Raycast 对齐：固定是 ⇧⌘P；⌘. 留给 Append to Clipboard。
     let s = state.clone();
@@ -1680,6 +1687,12 @@ fn action_items(state: &State) -> Vec<ActionItem> {
                 destructive: false,
             },
             ActionItem {
+                kind: ActionKind::PastePlain,
+                label: t!("action.paste_plain"),
+                shortcut: "alt+enter",
+                destructive: false,
+            },
+            ActionItem {
                 kind: ActionKind::Edit,
                 label: t!("action.edit"),
                 shortcut: "mod+e",
@@ -1789,11 +1802,16 @@ fn run_action(state: &State, store: Option<&Store>, kind: ActionKind) {
     match kind {
         ActionKind::Paste => {
             state.actions_open.set(false);
-            activate_selected(state, store, true);
+            let plain = prefer_plain(store);
+            activate_selected(state, store, true, plain);
+        }
+        ActionKind::PastePlain => {
+            state.actions_open.set(false);
+            activate_selected(state, store, true, true);
         }
         ActionKind::Copy => {
             state.actions_open.set(false);
-            activate_selected(state, store, false);
+            activate_selected(state, store, false, false);
         }
         ActionKind::Edit => {
             if state.source.get() == Source::Snippets {
@@ -1929,7 +1947,7 @@ fn move_selection(state: &State, delta: isize) {
     state.selected.set(Some(ids[next]));
 }
 
-fn activate_selected(state: &State, store: Option<&Store>, paste: bool) {
+fn activate_selected(state: &State, store: Option<&Store>, paste: bool, plain: bool) {
     if state.source.get() == Source::Snippets {
         activate_snippet(state, store, paste);
         return;
@@ -1940,6 +1958,22 @@ fn activate_selected(state: &State, store: Option<&Store>, paste: bool) {
     let ok = match clip.kind {
         ClipKind::Text | ClipKind::Link => match &clip.content {
             Some(text) => {
+                #[cfg(target_os = "macos")]
+                {
+                    let formats = if plain {
+                        Vec::new()
+                    } else {
+                        store
+                            .and_then(|store| store.formats_for(clip.id).ok())
+                            .unwrap_or_default()
+                    };
+                    if formats.is_empty() {
+                        set_clipboard(text.clone());
+                    } else {
+                        crate::clipboard::write_text_formats(text, &formats);
+                    }
+                }
+                #[cfg(not(target_os = "macos"))]
                 set_clipboard(text.clone());
                 true
             }
@@ -2048,6 +2082,12 @@ fn duplicate_snippet(state: &State, store: Option<&Store>) {
     if let Some(copy) = state.snippets.get().into_iter().find(|item| item.id == id) {
         start_snippet_editor(state, Some(copy), None);
     }
+}
+
+fn prefer_plain(store: Option<&Store>) -> bool {
+    store
+        .map(|store| crate::settings::read_bool(store, SETTING_PLAIN_PASTE, false))
+        .unwrap_or(false)
 }
 
 fn selected_snippet(state: &State) -> Option<Snippet> {
@@ -2356,7 +2396,8 @@ fn sidebar(state: State) -> impl IntoElement {
                                     selected.set(Some(id));
                                     if event.clicks >= 2 {
                                         if let Some(store) = crate::history::init() {
-                                            activate_selected(&row_state, Some(store.as_ref()), true);
+                                            let plain = prefer_plain(Some(store.as_ref()));
+                                            activate_selected(&row_state, Some(store.as_ref()), true, plain);
                                         }
                                     }
                                 })
@@ -2416,7 +2457,8 @@ fn sidebar(state: State) -> impl IntoElement {
                                     selected.set(Some(id));
                                     if event.clicks >= 2 {
                                         if let Some(store) = crate::history::init() {
-                                            activate_selected(&row_state, Some(store.as_ref()), true);
+                                            let plain = prefer_plain(Some(store.as_ref()));
+                                            activate_selected(&row_state, Some(store.as_ref()), true, plain);
                                         }
                                     }
                                 })

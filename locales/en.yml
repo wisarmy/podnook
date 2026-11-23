@@ -48,6 +48,7 @@ editor:
 action:
   paste: "Paste"
   copy: "Copy"
+  paste_plain: "Paste as Plain Text"
   edit: "Edit content"
   pin: "Pin"
   unpin: "Unpin"
@@ -133,6 +134,8 @@ settings:
   clear_confirm: "Confirm"
   paste: "Paste"
   auto_paste: "Auto-paste"
+  prefer_plain: "Prefer plain text"
+  prefer_plain_note: "Paste the plain text instead of the copied HTML/RTF; ⌥↵ always pastes plain text."
   auto_paste_note: "When off, Return only copies the item back to the clipboard and does not press ⌘V."
   login_section: "Login item"
   launch_at_login: "Launch at login"

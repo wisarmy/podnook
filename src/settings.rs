@@ -2,8 +2,8 @@
 
 use podnook_core::db::Store;
 use podnook_core::{
-    DEFAULT_IGNORED_BUNDLES, SETTING_AUTO_PASTE, SETTING_HOTKEY, SETTING_RETENTION_COUNT,
-    SETTING_RETENTION_DAYS,
+    DEFAULT_IGNORED_BUNDLES, SETTING_AUTO_PASTE, SETTING_HOTKEY, SETTING_PLAIN_PASTE,
+    SETTING_RETENTION_COUNT, SETTING_RETENTION_DAYS,
 };
 
 /// 默认呼出热键。
@@ -15,6 +15,7 @@ pub struct Settings {
     pub retention_count: i64,
     pub retention_days: i64,
     pub auto_paste: bool,
+    pub plain_paste: bool,
     pub ignored_bundles: Vec<String>,
 }
 
@@ -25,6 +26,7 @@ impl Default for Settings {
             retention_count: 1000,
             retention_days: 30,
             auto_paste: true,
+            plain_paste: false,
             ignored_bundles: DEFAULT_IGNORED_BUNDLES
                 .iter()
                 .map(|bundle| (*bundle).to_string())
@@ -50,6 +52,7 @@ pub fn load(store: Option<&Store>) -> Settings {
         retention_count: read_i64(store, SETTING_RETENTION_COUNT, 1000),
         retention_days: read_i64(store, SETTING_RETENTION_DAYS, 30),
         auto_paste: read_bool(store, SETTING_AUTO_PASTE, true),
+        plain_paste: read_bool(store, SETTING_PLAIN_PASTE, false),
         ignored_bundles: store.ignored_bundles().unwrap_or_default(),
     }
 }

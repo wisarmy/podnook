@@ -31,6 +31,8 @@ pub const SETTING_RETENTION_DAYS: &str = "retention.days";
 pub const SETTING_IGNORED_BUNDLES: &str = "ignored.bundles";
 pub const SETTING_HOTKEY: &str = "hotkey";
 pub const SETTING_AUTO_PASTE: &str = "auto_paste";
+/// 默认按纯文本粘贴（不写回 HTML/RTF）。
+pub const SETTING_PLAIN_PASTE: &str = "prefer_plain_paste";
 pub const SETTING_LAUNCH_AT_LOGIN: &str = "launch_at_login";
 
 /// 默认忽略的来源 App：密码管理器/钥匙串，避免敏感内容进历史。
@@ -77,6 +79,9 @@ pub struct Snapshot {
     pub file_uris: Vec<String>,
     /// 文件总字节数，未知为 `None`。
     pub file_bytes: Option<i64>,
+    /// 富文本的原始字节（`public.html` / `public.rtf`），可能没有。
+    pub html: Option<Vec<u8>>,
+    pub rtf: Option<Vec<u8>>,
     pub source_app: Option<String>,
     pub source_bundle: Option<String>,
 }
@@ -117,6 +122,8 @@ pub struct NewClip {
     pub source_bundle: Option<String>,
     pub byte_size: i64,
     pub truncated: bool,
+    /// 原始表示（`public.html`、`public.rtf`），用于按原格式粘回。
+    pub formats: Vec<(String, Vec<u8>)>,
 }
 
 /// 数据库里的一行。

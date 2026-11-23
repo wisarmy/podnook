@@ -97,6 +97,8 @@ fn read_snapshot_inner() -> Option<Snapshot> {
     if let Some(text) = pasteboard.stringForType(pb_type_string()) {
         let text = text.to_string();
         if !text.trim().is_empty() {
+            snapshot.html = data_for_type(&pasteboard, "public.html");
+            snapshot.rtf = data_for_type(&pasteboard, "public.rtf");
             snapshot.text = Some(text);
             return Some(snapshot);
         }
@@ -176,6 +178,31 @@ pub fn image_file_size(path: &str) -> Option<(u32, u32)> {
     let data = NSData::with_bytes(&bytes);
     let rep = NSBitmapImageRep::initWithData(NSBitmapImageRep::alloc(), &data)?;
     Some(size_of(&rep))
+}
+
+fn data_for_type(pasteboard: &NSPasteboard, kind: &str) -> Option<Vec<u8>> {
+    let kind = NSString::from_str(kind);
+    let data = pasteboard.dataForType(&kind)?;
+    Some(data.to_vec())
+}
+
+/// 按原始表示写回剪贴板：纯文本 + 捕获到的 HTML/RTF。
+pub fn write_text_formats(text: &str, formats: &[(String, Vec<u8>)]) -> bool {
+    autoreleasepool(|_| {
+        let item = NSPasteboardItem::new();
+        if !item.setString_forType(&NSString::from_str(text), pb_type_string()) {
+            return false;
+        }
+        for (kind, bytes) in formats {
+            let data = NSData::with_bytes(bytes);
+            item.setData_forType(&data, &NSString::from_str(kind));
+        }
+        let item = ProtocolObject::from_retained(item);
+        let array = NSArray::from_retained_slice(&[item]);
+        let pasteboard = NSPasteboard::generalPasteboard();
+        pasteboard.clearContents();
+        pasteboard.writeObjects(&array)
+    })
 }
 
 /// 把一个或多个文件写回系统剪贴板（`public.file-url` 条目）。
