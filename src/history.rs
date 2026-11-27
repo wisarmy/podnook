@@ -14,7 +14,7 @@ static GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// 数据目录：默认用 NSH 给应用分配的目录。
 /// `PODNOOK_DATA_DIR` 只用于开发时指向一份已有历史（截图、手工验收）。
-fn data_directory() -> Option<PathBuf> {
+pub fn data_directory() -> Option<PathBuf> {
     std::env::var_os("PODNOOK_DATA_DIR")
         .map(PathBuf::from)
         .or_else(data_dir)
@@ -69,7 +69,7 @@ fn migrate_image_dimensions(store: &Store) {
 /// 打开（或复用）全局历史库。没有数据目录时返回 `None`。
 pub fn init() -> Option<Arc<Store>> {
     STORE
-        .get_or_init(|| match data_directory() {
+        .get_or_init(|| match data_dir() {
             Some(dir) => match Store::open(&dir) {
                 Ok(store) => {
                     log::info!("history database at {}", dir.join("history.db").display());

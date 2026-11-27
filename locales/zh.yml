@@ -52,6 +52,7 @@ editor:
 
 action:
   paste: "粘贴"
+  copy_rich: "复制为富文本"
   copy: "仅复制"
   paste_plain: "粘贴为纯文本"
   edit: "编辑内容"
@@ -223,4 +224,3 @@ todo:
   failed: "保存待办失败"
   lines: "%{count} 行"
   only_text: "只有文本可以存为待办"
-  add_placeholder: "添加待办…"

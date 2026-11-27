@@ -17,6 +17,7 @@ test("shows the to-do actions", async () => {
   await app.press("id:actions-button");
   await app.wait(400);
   expect(has(app, "New To-do", "新建待办")).toBe(true);
+  expect(has(app, "Copy as Rich Text", "复制为富文本")).toBe(true);
   expect(has(app, "Delete Completed", "删除已完成")).toBe(true);
   expect(has(app, "Clear All To-dos…", "清空待办…")).toBe(true);
 });
@@ -32,16 +33,16 @@ test("adds a to-do and checks it off with Enter", async () => {
 
   const title = `Buy milk ${Date.now()}`;
   await app.keyboard.press("mod+n");
-  await app.wait(200);
-  await app.type("id:todo-draft", title);
-  await app.keyboard.press("enter");
+  await app.waitFor("id:todo-body", { timeout: 5000 });
+  await app.type("id:todo-body", title);
+  await app.keyboard.press("mod+s");
   await app.wait(600);
   if (!app.texts().includes(title)) {
     console.log("no data directory; skipping the to-do write");
     return;
   }
 
-  // 新增框是空的：回车离开输入框并勾选当前条目。
+  // 列表上的回车勾选当前条目。
   await app.keyboard.press("enter");
   await app.wait(600);
   expect(has(app, "Completed at", "完成于")).toBe(true);

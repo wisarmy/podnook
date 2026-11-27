@@ -129,9 +129,6 @@ struct State {
     placeholder_selected: Signal<usize>,
     todo_form: Signal<bool>,
     todo_form_id: Signal<Option<i64>>,
-    todo_draft: Signal<String>,
-    todo_add_focused: Signal<bool>,
-    todo_input: ElementRef,
     query: Signal<String>,
     filter: Signal<Option<ClipKind>>,
     selected: Signal<Option<i64>>,
@@ -209,6 +206,7 @@ enum ActionKind {
     DeleteCompleted,
     ClearTodos,
     SaveTodoFromSelection,
+    CopyTodoRich,
 }
 
 #[derive(Clone)]
@@ -253,7 +251,6 @@ pub fn shell() -> impl IntoElement {
     let search = element_ref();
     let actions_search = element_ref();
     let save_input = element_ref();
-    let todo_input = element_ref();
     SEARCH.with(|slot| *slot.borrow_mut() = Some(search));
     let state = State {
         clips,
@@ -270,9 +267,6 @@ pub fn shell() -> impl IntoElement {
         placeholder_selected: signal(0usize),
         todo_form: signal(false),
         todo_form_id: signal(None::<i64>),
-        todo_draft: signal(String::new()),
-        todo_add_focused: signal(false),
-        todo_input,
         query,
         filter,
         selected,
@@ -595,6 +589,22 @@ fn todo_form_view(state: State) -> impl IntoElement {
                         .value(content)
                         .auto_correct(false)
                         .on_change(move |value: &str| content.set(value.to_string()))
+                        .on_paste(move |event: &PasteEvent| {
+                            let mut body = content.get();
+                            let data = crate::history::data_directory();
+                            for file in &event.files {
+                                if !file.mime.starts_with("image/") {
+                                    continue;
+                                }
+                                if let Some(path) = data
+                                    .as_deref()
+                                    .and_then(|dir| save_todo_image(dir, file))
+                                {
+                                    body.push_str(&format!("\n![]({path})\n"));
+                                }
+                            }
+                            content.set(body);
+                        })
                         .text_size(px(13.0))
                         .text_color(theme::fg())
                         .auto_focus(true),
@@ -619,13 +629,13 @@ fn todo_form_view(state: State) -> impl IntoElement {
         )
 }
 
-fn start_todo_editor(state: &State, todo: Todo) {
-    state.todo_form_id.set(Some(todo.id));
-    state.edit_content.set(todo.title);
+fn start_todo_editor(state: &State, todo: Option<Todo>) {
+    state.todo_form_id.set(todo.as_ref().map(|todo| todo.id));
+    state.edit_content
+        .set(todo.map(|todo| todo.title).unwrap_or_default());
     state.editing.set(false);
     state.placeholder_menu.set(false);
     state.actions_open.set(false);
-    state.todo_add_focused.set(false);
     state.todo_form.set(true);
 }
 
@@ -634,25 +644,39 @@ fn cancel_todo_editor(state: &State) {
 }
 
 fn save_todo_editor(state: &State) {
-    let Some(id) = state.todo_form_id.get() else {
-        return;
-    };
     let Some(store) = crate::history::init() else {
         return;
     };
-    let title = state.edit_content.get();
-    if title.trim().is_empty() {
+    let body = state.edit_content.get();
+    if body.trim().is_empty() {
         flash(state, t!("todo.empty"));
         return;
     }
-    match store.rename_todo(id, title.trim()) {
+    let id = state.todo_form_id.get();
+    let previous = id
+        .and_then(|id| {
+            store
+                .list_todos()
+                .ok()?
+                .into_iter()
+                .find(|todo| todo.id == id)
+        })
+        .map(|todo| todo.title);
+    let result = match id {
+        Some(id) => store.rename_todo(id, body.trim()),
+        None => store.create_todo(body.trim(), now_secs()).map(|_| ()),
+    };
+    match result {
         Ok(()) => {
+            if let Some(previous) = previous {
+                cleanup_todo_images(store.as_ref(), &previous, &body);
+            }
             state.todo_form.set(false);
             crate::history::bump();
             reload(state, store.as_ref());
         }
         Err(e) => {
-            log::error!("rename todo: {e}");
+            log::error!("save todo: {e}");
             flash(state, t!("todo.failed"));
         }
     }
@@ -1492,7 +1516,6 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
         if s.actions_open.get() {
             move_action(&s, 1);
         } else {
-            leave_todo_input(&s);
             move_selection(&s, 1);
         }
     });
@@ -1506,7 +1529,6 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
         if s.actions_open.get() {
             move_action(&s, -1);
         } else {
-            leave_todo_input(&s);
             move_selection(&s, -1);
         }
     });
@@ -1530,12 +1552,7 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
             return;
         }
         if s.source.get() == Source::Todos {
-            if s.todo_draft.get().trim().is_empty() {
-                leave_todo_input(&s);
-                toggle_todo(&s, db.as_deref());
-            } else {
-                add_todo(&s, db.as_deref());
-            }
+            toggle_todo(&s, db.as_deref());
             return;
         }
         if s.actions_open.get() {
@@ -1580,7 +1597,7 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     on_key_with("mod+e", always(), move |_| {
         if s.source.get() == Source::Todos {
             if let Some(todo) = selected_todo(&s) {
-                start_todo_editor(&s, todo);
+                start_todo_editor(&s, Some(todo));
             }
             return;
         }
@@ -1635,7 +1652,7 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     let create = state.clone();
     on_key_with("mod+n", always(), move |_| {
         if create.source.get() == Source::Todos {
-            focus_todo_input(&create);
+            start_todo_editor(&create, None);
         } else if create.source.get() == Source::Snippets {
             start_snippet_editor(&create, None, None);
         }
@@ -1701,14 +1718,6 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
             cancel_todo_editor(&s);
             return;
         }
-        if s.source.get() == Source::Todos && s.todo_add_focused.get() {
-            if s.todo_draft.get().trim().is_empty() {
-                leave_todo_input(&s);
-            } else {
-                s.todo_draft.set(String::new());
-            }
-            return;
-        }
         if s.edit_clip.get().is_some() {
             cancel_clip_editor(&s);
             return;
@@ -1771,16 +1780,10 @@ fn switch_source(state: &State, source: Source) {
         return;
     }
     state.actions_open.set(false);
-    let was_adding = state.todo_add_focused.get();
     state.source.set(source);
     state.query.set(String::new());
     state.filter.set(None);
     state.selected.set(None);
-    state.todo_add_focused.set(false);
-    if was_adding {
-        let search = state.search;
-        set_timeout(Duration::from_millis(0), move || search.focus());
-    }
 }
 
 fn enter_action_mode(state: &State, mode: ActionMode) {
@@ -1882,6 +1885,12 @@ fn action_items(state: &State) -> Vec<ActionItem> {
                 kind: ActionKind::Copy,
                 label: t!("action.copy"),
                 shortcut: "mod+enter",
+                destructive: false,
+            },
+            ActionItem {
+                kind: ActionKind::CopyTodoRich,
+                label: t!("action.copy_rich"),
+                shortcut: "",
                 destructive: false,
             },
             ActionItem {
@@ -2170,13 +2179,21 @@ fn run_action(state: &State, store: Option<&Store>, kind: ActionKind) {
         }
         ActionKind::Copy => {
             state.actions_open.set(false);
+            if state.source.get() == Source::Todos {
+                copy_todo(state, store, false);
+                return;
+            }
             activate_selected(state, store, false, false);
+        }
+        ActionKind::CopyTodoRich => {
+            state.actions_open.set(false);
+            copy_todo(state, store, true);
         }
         ActionKind::Edit => {
             if state.source.get() == Source::Todos {
                 if let Some(todo) = selected_todo(state) {
                     state.actions_open.set(false);
-                    start_todo_editor(state, todo);
+                    start_todo_editor(state, Some(todo));
                 }
                 return;
             }
@@ -2242,14 +2259,19 @@ fn run_action(state: &State, store: Option<&Store>, kind: ActionKind) {
             close_actions(state);
         }
         ActionKind::NewTodo => {
-            focus_todo_input(state);
+            close_actions(state);
+            start_todo_editor(state, None);
         }
         ActionKind::DeleteCompleted => {
             let Some(store) = store else {
                 return;
             };
+            let removed = store.list_todos().unwrap_or_default();
             match store.delete_completed_todos() {
                 Ok(_) => {
+                    for todo in removed.into_iter().filter(|todo| todo.done) {
+                        cleanup_todo_images(store, &todo.title, "");
+                    }
                     crate::history::bump();
                     reload(state, store);
                     let next = default_selection(&state.rows.get());
@@ -2302,8 +2324,12 @@ fn run_action(state: &State, store: Option<&Store>, kind: ActionKind) {
                 return;
             };
             if state.source.get() == Source::Todos {
+                let removed = store.list_todos().unwrap_or_default();
                 match store.clear_todos() {
                     Ok(count) => {
+                        for todo in &removed {
+                            cleanup_todo_images(store, &todo.title, "");
+                        }
                         crate::history::bump();
                         reload(state, store);
                         let next = default_selection(&state.rows.get());
@@ -2459,12 +2485,25 @@ fn activate_selected(state: &State, store: Option<&Store>, paste: bool, plain: b
 }
 
 fn activate_todo(state: &State, store: Option<&Store>) {
+    copy_todo(state, store, false);
+}
+
+fn copy_todo(state: &State, store: Option<&Store>, rich: bool) {
     let Some(todo) = selected_todo(state) else {
         return;
     };
-    set_clipboard(todo.title.clone());
+    let text = todo.title.clone();
+    #[cfg(target_os = "macos")]
+    if rich {
+        let html = markdown::to_html(&absolute_image_paths(&text)).into_bytes();
+        crate::clipboard::write_text_formats(&text, &[("public.html".into(), html)]);
+    } else {
+        set_clipboard(text.clone());
+    }
+    #[cfg(not(target_os = "macos"))]
+    set_clipboard(text.clone());
     if let Some(store) = store {
-        store.mark_self_write(hash_text(&todo.title));
+        store.mark_self_write(hash_text(&text));
     }
     crate::hide_panel();
     flash(state, t!("flash.copied"));
@@ -2497,50 +2536,6 @@ fn move_todo_selected(state: &State, store: Option<&Store>, up: bool) {
         }
         Ok(false) => {}
         Err(e) => log::error!("move todo {}: {e}", todo.id),
-    }
-}
-
-/// 从新增框离开后，方向键和回车回到列表上；焦点交还搜索框，保持全局习惯。
-fn leave_todo_input(state: &State) {
-    if state.source.get() != Source::Todos || !state.todo_add_focused.get() {
-        return;
-    }
-    state.todo_add_focused.set(false);
-    state.search.focus();
-}
-
-fn focus_todo_input(state: &State) {
-    if state.source.get() != Source::Todos {
-        return;
-    }
-    state.actions_open.set(false);
-    state.actions_mode.set(ActionMode::Main);
-    state.actions_query.set(String::new());
-    state.actions_selected.set(0);
-    state.todo_add_focused.set(true);
-    let input = state.todo_input;
-    set_timeout(Duration::from_millis(30), move || input.focus());
-}
-
-fn add_todo(state: &State, store: Option<&Store>) {
-    let draft = state.todo_draft.get();
-    let title = draft.trim();
-    if title.is_empty() {
-        return;
-    }
-    let Some(store) = store else { return };
-    match store.create_todo(title, now_secs()) {
-        Ok(id) => {
-            state.todo_draft.set(String::new());
-            crate::history::bump();
-            reload(state, store);
-            state.selected.set(Some(id));
-            reveal_row(id);
-        }
-        Err(e) => {
-            log::error!("create todo: {e}");
-            flash(state, t!("todo.failed"));
-        }
     }
 }
 
@@ -2698,6 +2693,7 @@ fn delete_selected(state: &State, store: Option<&Store>) {
             log::error!("delete todo {}: {e}", todo.id);
             return;
         }
+        cleanup_todo_images(store, &todo.title, "");
         crate::history::bump();
         reload(state, store);
         let rows = state.rows.get();
@@ -2908,50 +2904,17 @@ enum RowKey {
     Todo(i64),
 }
 
-/// 待办的新增框：只在待办来源里出现；回车添加后留在原地，方便连续录入。
-fn todo_add_input(state: State) -> impl IntoElement {
-    let draft = state.todo_draft;
-    let focused = state.todo_add_focused;
-    let input_ref = state.todo_input;
-    view().px_3().pt_3().pb_1().child(
-        input()
-            .test_id("todo-draft")
-            .element_ref(&input_ref)
-            .value(draft)
-            .auto_correct(false)
-            .on_change(move |value: &str| draft.set(value.to_string()))
-            .on_focus(move || focused.set(true))
-            .on_blur(move || focused.set(false))
-            .placeholder(t!("todo.add_placeholder"))
-            .text_size(px(13.0))
-            .px_3()
-            .py_2()
-            .rounded(px(8.0))
-            .bg(theme::glass_card())
-            .border_1()
-            .border_color(theme::border()),
-    )
-}
-
 fn sidebar(state: State) -> impl IntoElement {
     let rows = state.rows;
     let selected = state.selected;
     let scroll_ref = element_ref();
     SIDEBAR.with(|slot| *slot.borrow_mut() = Some(scroll_ref));
-    let add_state = state.clone();
     view()
         .w(px(theme::SIDEBAR_WIDTH))
         .flex_col()
         .bg(theme::glass_surface())
         .border_r(px(1.0))
         .border_r_color(theme::border())
-        .child(dynamic(move || {
-            if add_state.source.get() == Source::Todos {
-                todo_add_input(add_state.clone()).into_element()
-            } else {
-                view().into_element()
-            }
-        }))
         .child(
             scroll().element_ref(&scroll_ref).flex_1().child(
                 view().flex_col().py_2().child(each(
@@ -3144,7 +3107,6 @@ fn sidebar(state: State) -> impl IntoElement {
                         }
                         Row::Todo(todo) => {
                             let id = todo.id;
-                            let row_state = state.clone();
                             let menu_state = state.clone();
                             let todos = state.todos;
                             let lookup = move |id: i64| {
@@ -3167,7 +3129,6 @@ fn sidebar(state: State) -> impl IntoElement {
                                     }
                                 })
                                 .on_press(move |_event: &PressEvent| {
-                                    leave_todo_input(&row_state);
                                     selected.set(Some(id));
                                 })
                                 .on_context_menu(move |_event: &nsh_core::ContextMenuEvent| {
@@ -3228,7 +3189,7 @@ fn sidebar(state: State) -> impl IntoElement {
                                         .child(
                                             text(move || {
                                                 lookup(id)
-                                                    .map(|todo| preview_for_text(&todo.title))
+                                                    .map(|todo| todo_row_title(&todo.title))
                                                     .unwrap_or_default()
                                             })
                                             .truncate()
@@ -3491,10 +3452,10 @@ fn todo_preview(state: State) -> impl IntoElement {
                 .child(
                     view().flex_1().p_6().child(
                         scroll().flex_1().child(
-                            text(todo.title.clone())
-                                .text_size(px(14.0))
-                                .text_color(theme::fg())
-                                .selectable(true),
+                            view()
+                                .flex_col()
+                                .gap_2()
+                                .children(markdown_blocks(&todo.title)),
                         ),
                     ),
                 )
@@ -3565,6 +3526,112 @@ fn snippet_preview(state: State) -> impl IntoElement {
     root
 }
 
+/// 列表行标题：正文第一行的纯文本，去掉块级和行内 Markdown 标记后截断。
+fn todo_row_title(body: &str) -> String {
+    let line = body
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or("")
+        .trim();
+    let line = line
+        .strip_prefix("### ")
+        .or_else(|| line.strip_prefix("## "))
+        .or_else(|| line.strip_prefix("# "))
+        .unwrap_or(line);
+    let line = line
+        .strip_prefix("- ")
+        .or_else(|| line.strip_prefix("* "))
+        .or_else(|| line.strip_prefix("+ "))
+        .or_else(|| line.strip_prefix("> "))
+        .unwrap_or(line);
+    let plain = strip_inline(line);
+    let mut chars = plain.trim().chars();
+    let head: String = chars.by_ref().take(80).collect();
+    if chars.next().is_some() {
+        format!("{head}…")
+    } else {
+        head
+    }
+}
+
+/// 一行 `![alt](path)` 的图片；只认数据目录里的相对路径，不加载远程地址。
+fn markdown_image_path(line: &str) -> Option<String> {
+    let rest = line.strip_prefix("![")?;
+    let close = rest.find("](")?;
+    let path = rest[close + 2..].strip_suffix(')')?.trim();
+    if !path.starts_with("todo-images/") {
+        return None;
+    }
+    crate::history::data_directory().map(|dir| dir.join(path).to_string_lossy().to_string())
+}
+
+/// 把粘贴进来的图片存到数据目录，返回正文里引用的相对路径。
+fn save_todo_image(data: &std::path::Path, file: &nsh_core::element::PastedFile) -> Option<String> {
+    let dir = data.join("todo-images");
+    std::fs::create_dir_all(&dir).ok()?;
+    let ext = match file.mime.as_str() {
+        "image/jpeg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        _ => "png",
+    };
+    let name = format!("{}.{ext}", podnook_core::hash_bytes(&file.data));
+    std::fs::write(dir.join(&name), &file.data).ok()?;
+    Some(format!("todo-images/{name}"))
+}
+
+/// 正文里引用的本地图片（只认 `todo-images/` 下的相对路径）。
+fn todo_image_refs(body: &str) -> Vec<String> {
+    let mut refs = Vec::new();
+    for line in body.lines() {
+        let Some(start) = line.find("](") else {
+            continue;
+        };
+        let rest = &line[start + 2..];
+        let Some(end) = rest.find(')') else {
+            continue;
+        };
+        let path = rest[..end].trim();
+        if path.starts_with("todo-images/") {
+            refs.push(path.to_string());
+        }
+    }
+    refs
+}
+
+/// 富文本复制时把图片的相对路径换成本地绝对路径，粘到别的应用里还能找到文件。
+fn absolute_image_paths(body: &str) -> String {
+    let Some(dir) = crate::history::data_directory() else {
+        return body.to_string();
+    };
+    let base = format!("file://{}", dir.join("todo-images").display()).replace(' ', "%20");
+    body.replace("](todo-images/", &format!("]({base}/"))
+}
+
+/// 删掉不再被正文引用的图片；内容相同的图片共用文件，其他待办还在用时保留。
+fn cleanup_todo_images(store: &Store, old: &str, new: &str) {
+    let Some(dir) = crate::history::data_directory() else {
+        return;
+    };
+    cleanup_todo_images_in(&dir, store, old, new);
+}
+
+fn cleanup_todo_images_in(data: &std::path::Path, store: &Store, old: &str, new: &str) {
+    let mut keep = todo_image_refs(new);
+    keep.extend(
+        store
+            .list_todos()
+            .unwrap_or_default()
+            .iter()
+            .flat_map(|todo| todo_image_refs(&todo.title)),
+    );
+    for path in todo_image_refs(old) {
+        if !keep.contains(&path) {
+            let _ = std::fs::remove_file(data.join(&path));
+        }
+    }
+}
+
 /// 片段预览的 Markdown 渲染：块级结构（标题、列表、代码、引用）用样式区分，
 /// 行内标记去掉符号，占位符的值仍然高亮。
 fn markdown_blocks(content: &str) -> Vec<nsh_core::element::AnyElement> {
@@ -3586,6 +3653,21 @@ fn markdown_blocks(content: &str) -> Vec<nsh_core::element::AnyElement> {
             continue;
         }
         if trimmed.is_empty() {
+            continue;
+        }
+        if let Some(path) = markdown_image_path(trimmed) {
+            blocks.push(
+                view()
+                    .w_full()
+                    .py_1()
+                    .child(
+                        image(path)
+                            .object_fit(ResizeMode::Contain)
+                            .w_full()
+                            .h(px(240.0)),
+                    )
+                    .into_element(),
+            );
             continue;
         }
         let (size, weight, body) = if let Some(rest) = trimmed.strip_prefix("### ") {
@@ -3703,11 +3785,6 @@ fn strip_inline(text: &str) -> String {
         }
     }
     out
-}
-
-/// 分段渲染时文本节点会吞掉首尾空格，段与段之间用一个固定宽度的空白单元补上。
-fn preview_runs(content: &str) -> Vec<nsh_core::element::AnyElement> {
-    preview_runs_styled(content, 14.0, FontWeight::NORMAL)
 }
 
 fn preview_runs_styled(
@@ -4220,5 +4297,58 @@ mod markdown_tests {
         let html = markdown::to_html("**bold** and [link](https://nsh.dev)");
         assert!(html.contains("<strong>bold</strong>"));
         assert!(html.contains("<a href=\"https://nsh.dev\">"));
+    }
+
+    #[test]
+    fn todo_rows_use_the_first_plain_line() {
+        assert_eq!(
+            super::todo_row_title("# 发布 0.4.0\n- 写 release notes"),
+            "发布 0.4.0"
+        );
+        assert_eq!(super::todo_row_title("\n- **粗体** 待办"), "粗体 待办");
+        assert_eq!(super::todo_row_title("  "), "");
+    }
+
+    #[test]
+    fn todo_image_refs_only_match_saved_images() {
+        let body = "text\n![a](todo-images/abc.png)\n![b](https://example.com/x.png)";
+        assert_eq!(super::todo_image_refs(body), vec!["todo-images/abc.png"]);
+        assert!(super::markdown_image_path("![a](https://example.com/x.png)").is_none());
+    }
+
+    #[test]
+    fn pasted_images_save_under_the_data_directory() {
+        let dir = std::env::temp_dir().join(format!("podnook-images-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let file = nsh_core::element::PastedFile::new("shot.png", "image/png", vec![
+            0x89, b'P', b'N', b'G',
+        ]);
+        let path = super::save_todo_image(&dir, &file).expect("image saved");
+        assert!(path.starts_with("todo-images/"));
+        assert!(path.ends_with(".png"));
+        assert_eq!(std::fs::read(dir.join(&path)).unwrap(), file.data);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cleanup_keeps_images_other_todos_reference() {
+        let dir = std::env::temp_dir().join(format!("podnook-cleanup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("todo-images")).unwrap();
+        let store = podnook_core::db::Store::open_in_memory(dir.clone()).unwrap();
+        let keep = dir.join("todo-images/keep.png");
+        let drop = dir.join("todo-images/drop.png");
+        std::fs::write(&keep, [1]).unwrap();
+        std::fs::write(&drop, [2]).unwrap();
+        store
+            .create_todo("![a](todo-images/keep.png)", 0)
+            .unwrap();
+
+        let old = "![a](todo-images/keep.png)\n![b](todo-images/drop.png)";
+        super::cleanup_todo_images_in(&dir, &store, old, "");
+
+        assert!(keep.exists());
+        assert!(!drop.exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

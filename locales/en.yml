@@ -52,6 +52,7 @@ editor:
 
 action:
   paste: "Paste"
+  copy_rich: "Copy as Rich Text"
   copy: "Copy"
   paste_plain: "Paste as Plain Text"
   edit: "Edit content"
@@ -223,4 +224,3 @@ todo:
   failed: "Could not save the to-do"
   lines: "%{count} lines"
   only_text: "Only text can become a to-do"
-  add_placeholder: "Add a to-do…"
