@@ -3144,11 +3144,12 @@ fn sidebar(state: State) -> impl IntoElement {
                         }
                         Row::Todo(todo) => {
                             let id = todo.id;
-                            let done = todo.done;
-                            let title = preview_for_text(&todo.title);
-                            let line_count = todo.title.lines().count();
                             let row_state = state.clone();
                             let menu_state = state.clone();
+                            let todos = state.todos;
+                            let lookup = move |id: i64| {
+                                todos.get().into_iter().find(|todo| todo.id == id)
+                            };
                             view()
                                 .element_ref(&row_ref(id))
                                 .flex_row()
@@ -3178,7 +3179,38 @@ fn sidebar(state: State) -> impl IntoElement {
                                     selected.set(Some(id));
                                     enter_action_mode(&menu_state, ActionMode::Main);
                                 })
-                                .child(todo_checkbox(done))
+                                .child(
+                                    view()
+                                        .size(px(16.0))
+                                        .items_center()
+                                        .justify_center()
+                                        .rounded(px(4.0))
+                                        .border_1()
+                                        .border_color(move || {
+                                            if lookup(id).is_some_and(|todo| todo.done) {
+                                                theme::primary()
+                                            } else {
+                                                theme::border()
+                                            }
+                                        })
+                                        .bg(move || {
+                                            if lookup(id).is_some_and(|todo| todo.done) {
+                                                theme::primary()
+                                            } else {
+                                                AdaptiveColor::TRANSPARENT
+                                            }
+                                        })
+                                        .child(dynamic(move || {
+                                            if lookup(id).is_some_and(|todo| todo.done) {
+                                                text("✓")
+                                                    .text_size(px(10.0))
+                                                    .text_color(theme::on_primary())
+                                                    .into_element()
+                                            } else {
+                                                view().into_element()
+                                            }
+                                        })),
+                                )
                                 .child(
                                     view()
                                         .flex_1()
@@ -3186,21 +3218,28 @@ fn sidebar(state: State) -> impl IntoElement {
                                         .items_center()
                                         .gap_2()
                                         .child(
-                                            text(title)
-                                                .truncate()
-                                                .text_size(px(13.0))
-                                                .text_color(move || {
-                                                    if done {
-                                                        theme::muted_fg()
-                                                    } else if selected.get() == Some(id) {
-                                                        theme::accent_fg()
-                                                    } else {
-                                                        theme::fg()
-                                                    }
-                                                }),
+                                            text(move || {
+                                                lookup(id)
+                                                    .map(|todo| preview_for_text(&todo.title))
+                                                    .unwrap_or_default()
+                                            })
+                                            .truncate()
+                                            .text_size(px(13.0))
+                                            .text_color(move || {
+                                                if lookup(id).is_some_and(|todo| todo.done) {
+                                                    theme::muted_fg()
+                                                } else if selected.get() == Some(id) {
+                                                    theme::accent_fg()
+                                                } else {
+                                                    theme::fg()
+                                                }
+                                            }),
                                         )
                                         .child(dynamic(move || {
-                                            if line_count <= 1 {
+                                            let lines = lookup(id)
+                                                .map(|todo| todo.title.lines().count())
+                                                .unwrap_or(0);
+                                            if lines <= 1 {
                                                 return view().into_element();
                                             }
                                             view()
@@ -3211,7 +3250,7 @@ fn sidebar(state: State) -> impl IntoElement {
                                                 .border_1()
                                                 .border_color(theme::border())
                                                 .child(
-                                                    text(t!("todo.lines", count = line_count))
+                                                    text(t!("todo.lines", count = lines))
                                                         .text_size(px(10.0))
                                                         .text_color(theme::muted_fg()),
                                                 )
@@ -3256,35 +3295,6 @@ fn icon_box(clip: &Clip) -> impl IntoElement {
             .text_size(px(12.0))
             .text_color(theme::muted_fg()),
     )
-}
-
-fn todo_checkbox(done: bool) -> impl IntoElement {
-    view()
-        .size(px(16.0))
-        .items_center()
-        .justify_center()
-        .rounded(px(4.0))
-        .border_1()
-        .border_color(if done {
-            theme::primary()
-        } else {
-            theme::border()
-        })
-        .bg(if done {
-            theme::primary()
-        } else {
-            AdaptiveColor::TRANSPARENT
-        })
-        .child(dynamic(move || {
-            if done {
-                text("✓")
-                    .text_size(px(10.0))
-                    .text_color(theme::on_primary())
-                    .into_element()
-            } else {
-                view().into_element()
-            }
-        }))
 }
 
 // ---------------------------------------------------------------- 预览
