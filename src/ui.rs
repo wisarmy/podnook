@@ -3166,21 +3166,29 @@ fn sidebar(state: State) -> impl IntoElement {
                                         AdaptiveColor::TRANSPARENT
                                     }
                                 })
-                                .on_press(move |event: &PressEvent| {
+                                .on_press(move |_event: &PressEvent| {
                                     leave_todo_input(&row_state);
                                     selected.set(Some(id));
-                                    if event.clicks >= 2 {
-                                        if let Some(store) = crate::history::init() {
-                                            toggle_todo(&row_state, Some(store.as_ref()));
-                                        }
-                                    }
                                 })
                                 .on_context_menu(move |_event: &nsh_core::ContextMenuEvent| {
                                     selected.set(Some(id));
                                     enter_action_mode(&menu_state, ActionMode::Main);
                                 })
-                                .child(
+                                .child({
+                                    let check_state = state.clone();
                                     view()
+                                        .on_press(move |event: &PressEvent| {
+                                            selected.set(Some(id));
+                                            if event.clicks == 1 {
+                                                if let Some(store) = crate::history::init() {
+                                                    toggle_todo(
+                                                        &check_state,
+                                                        Some(store.as_ref()),
+                                                    );
+                                                }
+                                            }
+                                        })
+                                        .cursor_pointer()
                                         .size(px(16.0))
                                         .items_center()
                                         .justify_center()
@@ -3209,8 +3217,8 @@ fn sidebar(state: State) -> impl IntoElement {
                                             } else {
                                                 view().into_element()
                                             }
-                                        })),
-                                )
+                                        }))
+                                })
                                 .child(
                                     view()
                                         .flex_1()
