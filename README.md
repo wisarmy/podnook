@@ -1,9 +1,9 @@
 # Podnook
 
-> A pod for everything you keep. All your clips and snippets, sealed within.
-> 把每件你在乎的事，都收进一只豆荚——每段复制、每句常用，都封在里面。
+> A pod for everything you keep. All your clips, snippets and to-dos, sealed within.
+> 把每件你在乎的事，都收进一只豆荚——每段复制、每句常用、每件待办，都封在里面。
 
-A local-first, open-source **clipboard history and snippet library** for macOS. Everything you copy stays on your Mac: summon it with one hotkey, search, pin, and paste it back into any app; save the text you reuse as snippets. Nothing is uploaded.
+A local-first, open-source **clipboard history, snippet and to-do app** for macOS. Everything you copy stays on your Mac: summon it with one hotkey, search, pin, and paste it back into any app; save the text you reuse as snippets; keep a quick to-do list beside them. Nothing is uploaded.
 
 Product context and decisions live in [`CONTEXT.md`](CONTEXT.md); architecture decisions in [`docs/adr/`](docs/adr/).
 
@@ -23,10 +23,12 @@ Menu-bar app without a Dock icon; a global
 ⌘⇧V hotkey opens a frameless panel (it covers other apps' full-screen spaces;
 closes on blur or Esc); background clipboard capture (text / image / files /
 links), de-duplication, privacy-marker filtering, SQLite persistence; search,
-type filters, preview and metadata, pin, delete, and a **snippet library** that
+type filters, preview and metadata, pin, delete, a **snippet library** that
 keeps reusable text beside the history (⌘S saves a clip, ⌘N creates one, ⌘D
-duplicates, ⇧⌘P pins);
-Return pastes into the app you came from (⌘↵ only copies). The settings window (⌘, or the menu-bar menu) has
+duplicates, ⇧⌘P pins), and a **to-do list** (⌘3, Enter checks items off, ⌥↑/↓
+reorders, ⌘T saves the selected clip or snippet as a to-do);
+in the history and snippets, Return pastes into the app you came from (⌘↵ only
+copies). The settings window (⌘, or the menu-bar menu) has
 hotkey recording, retention, auto-paste, launch at login, ignored apps, history
 clearing, permission status and the interface language. `make install` packages,
 signs with a fixed identity and installs into `/Applications`.
@@ -148,14 +150,16 @@ bundle id changes, or you switch machines (`tccutil reset Accessibility com.podn
 - Shortcuts (aligned with Raycast): `↵` paste, `⌘↵` copy only, `⌘K` actions,
   `⌘E` edit, `⇧⌘P` pin, `⌥⇧⌘S` save as file, `⌘P` cycle type filter, `⌃X`
   delete, `⇧⌘X` delete recent…, `⌃⇧X` clear all, `⌘O` open link/file, `⇧⌘O`
-  reveal in Finder, `⌘,` settings, `Esc` close. `⇧Tab`, `⌘1` and `⌘2` switch
-  between the history and the snippets (or click the icon and count at the
-  bottom left); in the history `⌘S` saves the
-  selected clip as a snippet, and in the snippets `⌘N` creates one, `⌘D`
-  duplicates it and `⇧⌘P` pins it. Snippets understand `{date}`, `{time}`, `{datetime}` and `{weekday}`, or a
+  reveal in Finder, `⌘,` settings, `Esc` close. `⇧Tab`, `⌘1`, `⌘2` and `⌘3`
+  switch between the history, the snippets and the to-dos (or click a segment in
+  the bottom-left switcher). In the history `⌘S` saves the
+  selected clip as a snippet; in the snippets `⌘N` creates one, `⌘D`
+  duplicates it and `⇧⌘P` pins it; in the to-dos `↵` checks an item off, `⌘↵`
+  copies it, `⌘N` jumps to the add field, and `⌥↑`/`⌥↓` moves it. `⌘T` saves the
+  selected clip or snippet as a to-do. Snippets understand `{date}`, `{time}`, `{datetime}` and `{weekday}`, or a
   custom `{date format="yyyy-MM-dd"}`; typing `{` in the editor opens the
   placeholder menu. Snippets are Markdown: `↵` pastes them as rich text and
-  `⇧↵` pastes the source. Editing a clip or a snippet happens in the panel, with
+  `⇧↵` pastes the source. Editing a clip, a snippet or a to-do happens in the panel, with
   `⌘S` or `⌘↵` to save and `Esc` to cancel. The hotkey always reopens the
   clipboard history. `⌫` only edits the search field.
 - Saving writes to `~/Downloads` by default; the path is editable in the actions
@@ -176,7 +180,7 @@ See [`LICENSE`](LICENSE).
 
 # 中文
 
-本地优先、开源的 macOS **剪贴板历史与片段库**。复制过的一切留在本机，一个快捷键召回、搜索、粘回，绝不上传；常用的文本存成片段，随时复用。
+本地优先、开源的 macOS **剪贴板历史、片段与待办**。复制过的一切留在本机，一个快捷键召回、搜索、粘回，绝不上传；常用的文本存成片段，要做的事记成待办。
 
 界面跟随系统语言，可在设置 →「语言」里切换。
 
@@ -213,16 +217,16 @@ make install   # 打包 → 用固定身份重签 → 校验 → 安装到 /Appl
 - 辅助功能权限仅用于「粘回」（模拟 ⌘V）；未授权时自动降级为「仅复制」。
 - 应用无 Dock 图标，常驻菜单栏；默认热键 **⌘⇧V**（可在设置里录制修改）。
 
-快捷键：`↵` 粘贴、`⌘↵` 仅复制、`⌘K` 操作面板、`⌘E` 编辑内容、`⇧⌘P` 固定、
+历史与片段里的快捷键：`↵` 粘贴、`⌘↵` 仅复制、`⌘K` 操作面板、`⌘E` 编辑内容、`⇧⌘P` 固定、
 `⌥⇧⌘S` 保存为文件、`⌘P` 切换类型筛选、`⌃X` 删除、`⇧⌘X` 删除最近…、
 `⌃⇧X` 清空全部、`⌘O` 打开链接/文件、`⇧⌘O` 在 Finder 中显示、`⌘,` 设置、`Esc` 收起。
-`⇧Tab`、`⌘1`、`⌘2` 都能切换历史与片段，也可以点左下角的图标切换；历史里 `⌘S` 把选中条目存成片段，片段里 `⌘N` 新建、`⌘D` 复制一份、`⇧⌘P` 置顶。
+`⇧Tab`、`⌘1`、`⌘2`、`⌘3` 都能切换历史、片段与待办，也可以点左下角的分段切换条；历史里 `⌘S` 把选中条目存成片段，片段里 `⌘N` 新建、`⌘D` 复制一份、`⇧⌘P` 置顶，待办里 `↵` 勾选、`⌘↵` 复制、`⌘N` 跳到新增框、`⌥↑`/`⌥↓` 调整顺序，`⌘T` 把选中的条目存为待办。
 片段支持 `{date}`、`{time}`、`{datetime}`、`{weekday}`，以及自定义格式
 `{date format="yyyy-MM-dd"}`；在正文里输入 `{` 会弹出占位符菜单。片段按 Markdown 写，
-`↵` 粘成富文本，`⇧↵` 粘源码。编辑条目或片段都在面板内
+`↵` 粘成富文本，`⇧↵` 粘源码。编辑条目、片段或待办都在面板内
 完成，`⌘S` / `⌘↵` 保存、`Esc` 取消。呼出热键总是回到历史。
 
-片段库把常用文本存成本机数据，搜索后回车粘贴；不监听全局键盘，也不新增权限。
+片段与待办都存成本机数据，搜索后回车粘贴；不监听全局键盘，也不新增权限。
 
 ## 开发
 

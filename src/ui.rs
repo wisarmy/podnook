@@ -21,7 +21,7 @@ use nsh_core::{
 };
 use podnook_core::db::Store;
 use podnook_core::{
-    hash_text, now_secs, preview_for_text, Clip, ClipKind, Snippet, SETTING_AUTO_PASTE,
+    hash_text, now_secs, preview_for_text, Clip, ClipKind, Snippet, Todo, SETTING_AUTO_PASTE,
     SETTING_PLAIN_PASTE,
 };
 
@@ -86,7 +86,10 @@ pub fn prepare_for_show() {
     // ⌘⇧V 的语义是打开剪贴板历史：除非正在编辑片段，否则每次都回到历史。
     STATE.with(|slot| {
         if let Some(state) = slot.borrow().as_ref() {
-            if !state.editing.get() && state.source.get() != Source::History {
+            if !state.editing.get()
+                && !state.todo_form.get()
+                && state.source.get() != Source::History
+            {
                 switch_source(state, Source::History);
             }
         }
@@ -114,6 +117,7 @@ pub fn prepare_for_show() {
 struct State {
     clips: Signal<Vec<Clip>>,
     snippets: Signal<Vec<Snippet>>,
+    todos: Signal<Vec<Todo>>,
     source: Signal<Source>,
     editing: Signal<bool>,
     edit_clip: Signal<Option<i64>>,
@@ -123,6 +127,11 @@ struct State {
     edit_keyword: Signal<String>,
     placeholder_menu: Signal<bool>,
     placeholder_selected: Signal<usize>,
+    todo_form: Signal<bool>,
+    todo_form_id: Signal<Option<i64>>,
+    todo_draft: Signal<String>,
+    todo_add_focused: Signal<bool>,
+    todo_input: ElementRef,
     query: Signal<String>,
     filter: Signal<Option<ClipKind>>,
     selected: Signal<Option<i64>>,
@@ -144,6 +153,7 @@ enum Row {
     Section(String),
     Clip(Clip),
     Snippet(Snippet),
+    Todo(Todo),
 }
 
 /// 面板当前浏览的来源。
@@ -151,10 +161,11 @@ enum Row {
 enum Source {
     History,
     Snippets,
+    Todos,
 }
 
 /// 来源的切换顺序：以后加新来源就加在这里。
-const SOURCES: &[Source] = &[Source::History, Source::Snippets];
+const SOURCES: &[Source] = &[Source::History, Source::Snippets, Source::Todos];
 
 fn next_source(current: Source) -> Source {
     let index = SOURCES
@@ -193,6 +204,11 @@ enum ActionKind {
     PinSnippet,
     DuplicateSnippet,
     PastePlain,
+    ToggleTodo,
+    NewTodo,
+    DeleteCompleted,
+    ClearTodos,
+    SaveTodoFromSelection,
 }
 
 #[derive(Clone)]
@@ -218,6 +234,7 @@ fn delete_ranges() -> Vec<(i64, String)> {
 pub fn shell() -> impl IntoElement {
     let clips = signal(Vec::<Clip>::new());
     let snippets = signal(Vec::<Snippet>::new());
+    let todos = signal(Vec::<Todo>::new());
     let source = signal(Source::History);
     let query = signal(String::new());
     let filter = signal(None::<ClipKind>);
@@ -227,6 +244,7 @@ pub fn shell() -> impl IntoElement {
         build_rows(
             &clips.get(),
             &snippets.get(),
+            &todos.get(),
             source.get(),
             &query.get(),
             filter.get(),
@@ -235,10 +253,12 @@ pub fn shell() -> impl IntoElement {
     let search = element_ref();
     let actions_search = element_ref();
     let save_input = element_ref();
+    let todo_input = element_ref();
     SEARCH.with(|slot| *slot.borrow_mut() = Some(search));
     let state = State {
         clips,
         snippets,
+        todos,
         source,
         editing: signal(false),
         edit_clip: signal(None::<i64>),
@@ -248,6 +268,11 @@ pub fn shell() -> impl IntoElement {
         edit_keyword: signal(String::new()),
         placeholder_menu: signal(false),
         placeholder_selected: signal(0usize),
+        todo_form: signal(false),
+        todo_form_id: signal(None::<i64>),
+        todo_draft: signal(String::new()),
+        todo_add_focused: signal(false),
+        todo_input,
         query,
         filter,
         selected,
@@ -340,6 +365,9 @@ fn shell_view(state: State) -> impl IntoElement {
         .overflow_hidden();
     if state.editing.get() {
         return root.child(snippet_form(state.clone()));
+    }
+    if state.todo_form.get() {
+        return root.child(todo_form_view(state.clone()));
     }
     if state.edit_clip.get().is_some() {
         return root.child(clip_form(state.clone()));
@@ -510,6 +538,124 @@ fn snippet_form(state: State) -> impl IntoElement {
                     save_snippet(&save_state)
                 })),
         )
+}
+
+/// 待办编辑态：单字段多行，和片段编辑共用 `edit_content`。
+fn todo_form_view(state: State) -> impl IntoElement {
+    let content = state.edit_content;
+    let back_state = state.clone();
+    let cancel_state = state.clone();
+    let save_state = state.clone();
+    view()
+        .flex_1()
+        .flex_col()
+        .p_6()
+        .gap_4()
+        .child(
+            view()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .child(
+                    view()
+                        .on_press(move |_event: &PressEvent| cancel_todo_editor(&back_state))
+                        .px_2()
+                        .py_1()
+                        .rounded(px(7.0))
+                        .bg(theme::card())
+                        .border_1()
+                        .border_color(theme::border())
+                        .cursor_pointer()
+                        .child(
+                            text("←")
+                                .text_size(px(13.0))
+                                .text_color(theme::fg()),
+                        ),
+                )
+                .child(
+                    text(t!("todo.title"))
+                        .text_size(px(11.0))
+                        .text_color(theme::muted_fg()),
+                ),
+        )
+        .child(
+            view()
+                .flex_1()
+                .flex_col()
+                .rounded(px(8.0))
+                .bg(theme::glass_card())
+                .border_1()
+                .border_color(theme::border())
+                .p_3()
+                .child(
+                    input()
+                        .test_id("todo-body")
+                        .multiline(true)
+                        .flex_1()
+                        .value(content)
+                        .auto_correct(false)
+                        .on_change(move |value: &str| content.set(value.to_string()))
+                        .text_size(px(13.0))
+                        .text_color(theme::fg())
+                        .auto_focus(true),
+                ),
+        )
+        .child(
+            text(t!("todo.hint"))
+                .text_size(px(11.0))
+                .text_color(theme::muted_fg()),
+        )
+        .child(
+            view()
+                .flex_row()
+                .justify_end()
+                .gap_2()
+                .child(editor_button(t!("editor.cancel"), false, move || {
+                    cancel_todo_editor(&cancel_state)
+                }))
+                .child(editor_button(t!("snippet.save"), true, move || {
+                    save_todo_editor(&save_state)
+                })),
+        )
+}
+
+fn start_todo_editor(state: &State, todo: Todo) {
+    state.todo_form_id.set(Some(todo.id));
+    state.edit_content.set(todo.title);
+    state.editing.set(false);
+    state.placeholder_menu.set(false);
+    state.actions_open.set(false);
+    state.todo_add_focused.set(false);
+    state.todo_form.set(true);
+}
+
+fn cancel_todo_editor(state: &State) {
+    state.todo_form.set(false);
+}
+
+fn save_todo_editor(state: &State) {
+    let Some(id) = state.todo_form_id.get() else {
+        return;
+    };
+    let Some(store) = crate::history::init() else {
+        return;
+    };
+    let title = state.edit_content.get();
+    if title.trim().is_empty() {
+        flash(state, t!("todo.empty"));
+        return;
+    }
+    match store.rename_todo(id, title.trim()) {
+        Ok(()) => {
+            state.todo_form.set(false);
+            crate::history::bump();
+            reload(state, store.as_ref());
+        }
+        Err(e) => {
+            log::error!("rename todo: {e}");
+            flash(state, t!("todo.failed"));
+        }
+    }
 }
 
 /// 进入剪贴板条目的编辑态：正文复用 `edit_content`，行为与片段编辑一致。
@@ -1048,6 +1194,10 @@ fn reload(state: &State, store: &Store) {
         Ok(snippets) => state.snippets.set(snippets),
         Err(e) => log::error!("list snippets: {e}"),
     }
+    match store.list_todos() {
+        Ok(todos) => state.todos.set(todos),
+        Err(e) => log::error!("list todos: {e}"),
+    }
 }
 
 fn selected_clip(state: &State) -> Option<Clip> {
@@ -1055,11 +1205,26 @@ fn selected_clip(state: &State) -> Option<Clip> {
     state.clips.get().into_iter().find(|clip| clip.id == id)
 }
 
+fn selected_snippet(state: &State) -> Option<Snippet> {
+    let id = state.selected.get()?;
+    state
+        .snippets
+        .get()
+        .into_iter()
+        .find(|snippet| snippet.id == id)
+}
+
+fn selected_todo(state: &State) -> Option<Todo> {
+    let id = state.selected.get()?;
+    state.todos.get().into_iter().find(|todo| todo.id == id)
+}
+
 fn visible_ids(rows: &[Row]) -> Vec<i64> {
     rows.iter()
         .filter_map(|row| match row {
             Row::Clip(clip) => Some(clip.id),
             Row::Snippet(snippet) => Some(snippet.id),
+            Row::Todo(todo) => Some(todo.id),
             Row::Section(_) => None,
         })
         .collect()
@@ -1078,6 +1243,7 @@ fn default_selection(rows: &[Row]) -> Option<i64> {
                 clip.id
             }
             Row::Snippet(snippet) => snippet.id,
+            Row::Todo(todo) => todo.id,
             Row::Section(_) => continue,
         };
         first.get_or_insert(id);
@@ -1088,11 +1254,31 @@ fn default_selection(rows: &[Row]) -> Option<i64> {
 fn build_rows(
     clips: &[Clip],
     snippets: &[Snippet],
+    todos: &[Todo],
     source: Source,
     query: &str,
     filter: Option<ClipKind>,
 ) -> Vec<Row> {
     let q = query.trim().to_lowercase();
+    if source == Source::Todos {
+        let matched: Vec<Todo> = todos
+            .iter()
+            .filter(|todo| q.is_empty() || todo.title.to_lowercase().contains(&q))
+            .cloned()
+            .collect();
+        let (open, done): (Vec<Todo>, Vec<Todo>) =
+            matched.into_iter().partition(|todo| !todo.done);
+        let mut rows = Vec::new();
+        if !open.is_empty() {
+            rows.push(Row::Section(t!("group.todo_open")));
+            rows.extend(open.into_iter().map(Row::Todo));
+        }
+        if !done.is_empty() {
+            rows.push(Row::Section(t!("group.todo_done")));
+            rows.extend(done.into_iter().map(Row::Todo));
+        }
+        return rows;
+    }
     if source == Source::Snippets {
         let matched: Vec<Snippet> = snippets
             .iter()
@@ -1306,6 +1492,7 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
         if s.actions_open.get() {
             move_action(&s, 1);
         } else {
+            leave_todo_input(&s);
             move_selection(&s, 1);
         }
     });
@@ -1319,6 +1506,7 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
         if s.actions_open.get() {
             move_action(&s, -1);
         } else {
+            leave_todo_input(&s);
             move_selection(&s, -1);
         }
     });
@@ -1337,8 +1525,17 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
             insert_placeholder(&s, s.placeholder_selected.get());
             return;
         }
-        if s.editing.get() {
-            // 正文是多行输入框：Enter 交给它换行，保存用 ⌘↵ / ⌘S。
+        if s.editing.get() || s.todo_form.get() {
+            // 多行输入框：Enter 交给它换行，保存用 ⌘↵ / ⌘S。
+            return;
+        }
+        if s.source.get() == Source::Todos {
+            if s.todo_draft.get().trim().is_empty() {
+                leave_todo_input(&s);
+                toggle_todo(&s, db.as_deref());
+            } else {
+                add_todo(&s, db.as_deref());
+            }
             return;
         }
         if s.actions_open.get() {
@@ -1351,6 +1548,8 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
                     run_action(&s, store.as_deref(), item.kind);
                 }
             }
+        } else if s.source.get() == Source::Todos {
+            toggle_todo(&s, db.as_deref());
         } else {
             let plain = prefer_plain(db.as_deref());
             activate_selected(&s, db.as_deref(), true, plain);
@@ -1359,6 +1558,10 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     let s = state.clone();
     let db = store.clone();
     on_key_with("mod+enter", always(), move |_| {
+        if s.todo_form.get() {
+            save_todo_editor(&s);
+            return;
+        }
         if s.edit_clip.get().is_some() {
             save_clip_editor(&s);
             return;
@@ -1375,6 +1578,12 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     });
     let s = state.clone();
     on_key_with("mod+e", always(), move |_| {
+        if s.source.get() == Source::Todos {
+            if let Some(todo) = selected_todo(&s) {
+                start_todo_editor(&s, todo);
+            }
+            return;
+        }
         if s.source.get() == Source::Snippets {
             if let Some(snippet) = selected_snippet(&s) {
                 s.actions_open.set(false);
@@ -1391,7 +1600,7 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     });
     let s = state.clone();
     on_key_with("alt+shift+mod+s", always(), move |_| {
-        if selected_clip(&s).is_some() {
+        if s.source.get() == Source::History && selected_clip(&s).is_some() {
             enter_save_mode(&s);
         }
     });
@@ -1404,6 +1613,9 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     let s = state.clone();
     let db = store.clone();
     on_key_with("shift+mod+p", always(), move |_| {
+        if s.source.get() == Source::Todos {
+            return;
+        }
         if s.source.get() == Source::Snippets {
             toggle_snippet_pin(&s, db.as_deref());
         } else {
@@ -1413,7 +1625,6 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
             close_actions(&s);
         }
     });
-    let s = state.clone();
     let duplicate = state.clone();
     let duplicate_db = store.clone();
     on_key_with("mod+d", always(), move |_| {
@@ -1423,11 +1634,18 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     });
     let create = state.clone();
     on_key_with("mod+n", always(), move |_| {
-        if create.source.get() == Source::Snippets {
+        if create.source.get() == Source::Todos {
+            focus_todo_input(&create);
+        } else if create.source.get() == Source::Snippets {
             start_snippet_editor(&create, None, None);
         }
     });
-    on_key_with("mod+p", always(), move |_| cycle_filter(&s));
+    let s = state.clone();
+    on_key_with("mod+p", always(), move |_| {
+        if s.source.get() == Source::History {
+            cycle_filter(&s);
+        }
+    });
     // Raycast 对齐：⌃X 删除当前条目。
     let s = state.clone();
     let db = store.clone();
@@ -1440,11 +1658,34 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     // ⇧⌘X 打开「删除最近…」，⌃⇧X 打开「清空全部」确认。
     let s = state.clone();
     on_key_with("shift+mod+x", always(), move |_| {
-        enter_action_mode(&s, ActionMode::Range)
+        if s.source.get() == Source::History {
+            enter_action_mode(&s, ActionMode::Range);
+        }
     });
     let s = state.clone();
     on_key_with("ctrl+shift+x", always(), move |_| {
-        enter_action_mode(&s, ActionMode::ConfirmAll)
+        if s.source.get() != Source::Snippets {
+            enter_action_mode(&s, ActionMode::ConfirmAll);
+        }
+    });
+    let s = state.clone();
+    let db = store.clone();
+    on_key_with("alt+up", always(), move |_| {
+        if s.source.get() == Source::Todos {
+            move_todo_selected(&s, db.as_deref(), true);
+        }
+    });
+    let s = state.clone();
+    let db = store.clone();
+    on_key_with("alt+down", always(), move |_| {
+        if s.source.get() == Source::Todos {
+            move_todo_selected(&s, db.as_deref(), false);
+        }
+    });
+    let s = state.clone();
+    let db = store.clone();
+    on_key_with("mod+t", always(), move |_| {
+        save_selected_as_todo(&s, db.as_deref());
     });
     let s = state.clone();
     on_key_with("mod+k", always(), move |_| {
@@ -1456,6 +1697,18 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     });
     let s = state.clone();
     on_key_with("escape", always(), move |_| {
+        if s.todo_form.get() {
+            cancel_todo_editor(&s);
+            return;
+        }
+        if s.source.get() == Source::Todos && s.todo_add_focused.get() {
+            if s.todo_draft.get().trim().is_empty() {
+                leave_todo_input(&s);
+            } else {
+                s.todo_draft.set(String::new());
+            }
+            return;
+        }
         if s.edit_clip.get().is_some() {
             cancel_clip_editor(&s);
             return;
@@ -1477,7 +1730,9 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     // ⌘S：历史里把选中条目存成片段；片段模式下新建。
     let save_state = state.clone();
     on_key("mod+s", move |_| {
-        if save_state.edit_clip.get().is_some() {
+        if save_state.todo_form.get() {
+            save_todo_editor(&save_state);
+        } else if save_state.edit_clip.get().is_some() {
             save_clip_editor(&save_state);
         } else if save_state.editing.get() {
             save_snippet(&save_state);
@@ -1491,7 +1746,7 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
 
     let cycle = state.clone();
     on_key("shift+tab", move |_| {
-        if cycle.editing.get() || cycle.edit_clip.get().is_some() {
+        if cycle.editing.get() || cycle.todo_form.get() || cycle.edit_clip.get().is_some() {
             return;
         }
         let next = next_source(cycle.source.get());
@@ -1502,6 +1757,8 @@ fn bind_keys(state: &State, store: Option<Arc<Store>>) {
     on_key("mod+1", move |_| switch_source(&source_1, Source::History));
     let source_2 = state.clone();
     on_key("mod+2", move |_| switch_source(&source_2, Source::Snippets));
+    let source_3 = state.clone();
+    on_key("mod+3", move |_| switch_source(&source_3, Source::Todos));
 
     on_key("mod+,", |_| crate::open_settings());
 }
@@ -1510,10 +1767,20 @@ fn switch_source(state: &State, source: Source) {
     if state.source.get() == source {
         return;
     }
+    if state.editing.get() || state.todo_form.get() || state.edit_clip.get().is_some() {
+        return;
+    }
+    state.actions_open.set(false);
+    let was_adding = state.todo_add_focused.get();
     state.source.set(source);
     state.query.set(String::new());
     state.filter.set(None);
     state.selected.set(None);
+    state.todo_add_focused.set(false);
+    if was_adding {
+        let search = state.search;
+        set_timeout(Duration::from_millis(0), move || search.focus());
+    }
 }
 
 fn enter_action_mode(state: &State, mode: ActionMode) {
@@ -1571,6 +1838,83 @@ fn move_action(state: &State, delta: isize) {
 }
 
 fn action_items(state: &State) -> Vec<ActionItem> {
+    if state.source.get() == Source::Todos {
+        if state.actions_mode.get() == ActionMode::ConfirmAll {
+            let mut items = vec![
+                ActionItem {
+                    kind: ActionKind::ConfirmDeleteAll,
+                    label: t!("action.clear_todos_confirm"),
+                    shortcut: "enter",
+                    destructive: true,
+                },
+                ActionItem {
+                    kind: ActionKind::Back,
+                    label: t!("editor.cancel"),
+                    shortcut: "escape",
+                    destructive: false,
+                },
+            ];
+            let query = state.actions_query.get().trim().to_lowercase();
+            if !query.is_empty() {
+                items.retain(|item| item.label.to_lowercase().contains(&query));
+            }
+            return items;
+        }
+        let open = selected_todo(state).is_some_and(|todo| !todo.done);
+        let mut items = vec![
+            ActionItem {
+                kind: ActionKind::ToggleTodo,
+                label: if open {
+                    t!("action.toggle_todo")
+                } else {
+                    t!("action.untoggle_todo")
+                },
+                shortcut: "enter",
+                destructive: false,
+            },
+            ActionItem {
+                kind: ActionKind::Edit,
+                label: t!("action.edit"),
+                shortcut: "mod+e",
+                destructive: false,
+            },
+            ActionItem {
+                kind: ActionKind::Copy,
+                label: t!("action.copy"),
+                shortcut: "mod+enter",
+                destructive: false,
+            },
+            ActionItem {
+                kind: ActionKind::NewTodo,
+                label: t!("action.new_todo"),
+                shortcut: "mod+n",
+                destructive: false,
+            },
+            ActionItem {
+                kind: ActionKind::Delete,
+                label: t!("action.delete"),
+                shortcut: "ctrl+x",
+                destructive: true,
+            },
+            ActionItem {
+                kind: ActionKind::DeleteCompleted,
+                label: t!("action.delete_completed"),
+                shortcut: "",
+                destructive: true,
+            },
+            ActionItem {
+                kind: ActionKind::ClearTodos,
+                label: t!("action.clear_todos"),
+                shortcut: "ctrl+shift+x",
+                destructive: true,
+            },
+        ];
+        let query = state.actions_query.get().trim().to_lowercase();
+        if !query.is_empty() {
+            items.retain(|item| item.label.to_lowercase().contains(&query));
+        }
+        return items;
+    }
     if state.source.get() == Source::Snippets {
         let pinned = selected_snippet(state).is_some_and(|snippet| snippet.pinned);
         let mut items = vec![
@@ -1606,6 +1950,12 @@ fn action_items(state: &State) -> Vec<ActionItem> {
                 kind: ActionKind::DuplicateSnippet,
                 label: t!("action.duplicate_snippet"),
                 shortcut: "mod+d",
+                destructive: false,
+            },
+            ActionItem {
+                kind: ActionKind::SaveTodoFromSelection,
+                label: t!("action.save_todo"),
+                shortcut: "mod+t",
                 destructive: false,
             },
             ActionItem {
@@ -1720,6 +2070,12 @@ fn action_items(state: &State) -> Vec<ActionItem> {
                 destructive: false,
             },
             ActionItem {
+                kind: ActionKind::SaveTodoFromSelection,
+                label: t!("action.save_todo"),
+                shortcut: "mod+t",
+                destructive: false,
+            },
+            ActionItem {
                 kind: ActionKind::Delete,
                 label: t!("action.delete"),
                 shortcut: "ctrl+x",
@@ -1817,6 +2173,13 @@ fn run_action(state: &State, store: Option<&Store>, kind: ActionKind) {
             activate_selected(state, store, false, false);
         }
         ActionKind::Edit => {
+            if state.source.get() == Source::Todos {
+                if let Some(todo) = selected_todo(state) {
+                    state.actions_open.set(false);
+                    start_todo_editor(state, todo);
+                }
+                return;
+            }
             if state.source.get() == Source::Snippets {
                 if let Some(snippet) = selected_snippet(state) {
                     state.actions_open.set(false);
@@ -1874,6 +2237,33 @@ fn run_action(state: &State, store: Option<&Store>, kind: ActionKind) {
             duplicate_snippet(state, store);
             close_actions(state);
         }
+        ActionKind::ToggleTodo => {
+            toggle_todo(state, store);
+            close_actions(state);
+        }
+        ActionKind::NewTodo => {
+            focus_todo_input(state);
+        }
+        ActionKind::DeleteCompleted => {
+            let Some(store) = store else {
+                return;
+            };
+            match store.delete_completed_todos() {
+                Ok(_) => {
+                    crate::history::bump();
+                    reload(state, store);
+                    let next = default_selection(&state.rows.get());
+                    select_and_reveal(state, next);
+                    close_actions(state);
+                }
+                Err(e) => log::error!("delete completed todos: {e}"),
+            }
+        }
+        ActionKind::ClearTodos => enter_action_mode(state, ActionMode::ConfirmAll),
+        ActionKind::SaveTodoFromSelection => {
+            close_actions(state);
+            save_selected_as_todo(state, store);
+        }
         ActionKind::DeleteEntries => enter_action_mode(state, ActionMode::Range),
         ActionKind::DeleteAll => enter_action_mode(state, ActionMode::ConfirmAll),
         ActionKind::Back => {
@@ -1911,6 +2301,20 @@ fn run_action(state: &State, store: Option<&Store>, kind: ActionKind) {
             let Some(store) = store else {
                 return;
             };
+            if state.source.get() == Source::Todos {
+                match store.clear_todos() {
+                    Ok(count) => {
+                        crate::history::bump();
+                        reload(state, store);
+                        let next = default_selection(&state.rows.get());
+                        select_and_reveal(state, next);
+                        close_actions(state);
+                        flash(state, t!("flash.cleared_todos", count = count));
+                    }
+                    Err(e) => log::error!("clear todos: {e}"),
+                }
+                return;
+            }
             match store.clear_history() {
                 Ok(count) => {
                     crate::history::bump();
@@ -1951,6 +2355,10 @@ fn move_selection(state: &State, delta: isize) {
 }
 
 fn activate_selected(state: &State, store: Option<&Store>, paste: bool, plain: bool) {
+    if state.source.get() == Source::Todos {
+        activate_todo(state, store);
+        return;
+    }
     if state.source.get() == Source::Snippets {
         activate_snippet(state, store, paste, plain);
         return;
@@ -2050,6 +2458,128 @@ fn activate_selected(state: &State, store: Option<&Store>, paste: bool, plain: b
     flash(state, t!("flash.copied"));
 }
 
+fn activate_todo(state: &State, store: Option<&Store>) {
+    let Some(todo) = selected_todo(state) else {
+        return;
+    };
+    set_clipboard(todo.title.clone());
+    if let Some(store) = store {
+        store.mark_self_write(hash_text(&todo.title));
+    }
+    crate::hide_panel();
+    flash(state, t!("flash.copied"));
+}
+
+fn toggle_todo(state: &State, store: Option<&Store>) {
+    let Some(todo) = selected_todo(state) else {
+        return;
+    };
+    let Some(store) = store else { return };
+    if let Err(e) = store.set_todo_done(todo.id, !todo.done, now_secs()) {
+        log::error!("toggle todo {}: {e}", todo.id);
+        return;
+    }
+    crate::history::bump();
+    reload(state, store);
+    reveal_row(todo.id);
+}
+
+fn move_todo_selected(state: &State, store: Option<&Store>, up: bool) {
+    let Some(todo) = selected_todo(state) else {
+        return;
+    };
+    let Some(store) = store else { return };
+    match store.move_todo(todo.id, up) {
+        Ok(true) => {
+            crate::history::bump();
+            reload(state, store);
+            reveal_row(todo.id);
+        }
+        Ok(false) => {}
+        Err(e) => log::error!("move todo {}: {e}", todo.id),
+    }
+}
+
+/// 从新增框离开后，方向键和回车回到列表上；焦点交还搜索框，保持全局习惯。
+fn leave_todo_input(state: &State) {
+    if state.source.get() != Source::Todos || !state.todo_add_focused.get() {
+        return;
+    }
+    state.todo_add_focused.set(false);
+    state.search.focus();
+}
+
+fn focus_todo_input(state: &State) {
+    if state.source.get() != Source::Todos {
+        return;
+    }
+    state.actions_open.set(false);
+    state.actions_mode.set(ActionMode::Main);
+    state.actions_query.set(String::new());
+    state.actions_selected.set(0);
+    state.todo_add_focused.set(true);
+    let input = state.todo_input;
+    set_timeout(Duration::from_millis(30), move || input.focus());
+}
+
+fn add_todo(state: &State, store: Option<&Store>) {
+    let draft = state.todo_draft.get();
+    let title = draft.trim();
+    if title.is_empty() {
+        return;
+    }
+    let Some(store) = store else { return };
+    match store.create_todo(title, now_secs()) {
+        Ok(id) => {
+            state.todo_draft.set(String::new());
+            crate::history::bump();
+            reload(state, store);
+            state.selected.set(Some(id));
+            reveal_row(id);
+        }
+        Err(e) => {
+            log::error!("create todo: {e}");
+            flash(state, t!("todo.failed"));
+        }
+    }
+}
+
+/// 历史/片段里的 `⌘T`：把选中的文本存成待办并切过去。
+fn save_selected_as_todo(state: &State, store: Option<&Store>) {
+    if state.editing.get() || state.todo_form.get() || state.edit_clip.get().is_some() {
+        return;
+    }
+    state.actions_open.set(false);
+    let title = match state.source.get() {
+        Source::History => selected_clip(state)
+            .and_then(|clip| clip.content)
+            .unwrap_or_default(),
+        Source::Snippets => selected_snippet(state)
+            .map(|snippet| snippet.content)
+            .unwrap_or_default(),
+        Source::Todos => return,
+    };
+    let title = title.trim();
+    if title.is_empty() {
+        flash(state, t!("todo.only_text"));
+        return;
+    }
+    let Some(store) = store else { return };
+    match store.create_todo(title, now_secs()) {
+        Ok(id) => {
+            crate::history::bump();
+            reload(state, store);
+            switch_source(state, Source::Todos);
+            state.selected.set(Some(id));
+            reveal_row(id);
+        }
+        Err(e) => {
+            log::error!("save as todo: {e}");
+            flash(state, t!("todo.failed"));
+        }
+    }
+}
+
 fn toggle_snippet_pin(state: &State, store: Option<&Store>) {
     let Some(snippet) = selected_snippet(state) else {
         return;
@@ -2091,15 +2621,6 @@ fn prefer_plain(store: Option<&Store>) -> bool {
     store
         .map(|store| crate::settings::read_bool(store, SETTING_PLAIN_PASTE, false))
         .unwrap_or(false)
-}
-
-fn selected_snippet(state: &State) -> Option<Snippet> {
-    let id = state.selected.get()?;
-    state
-        .snippets
-        .get()
-        .into_iter()
-        .find(|snippet| snippet.id == id)
 }
 
 fn activate_snippet(state: &State, store: Option<&Store>, paste: bool, plain: bool) {
@@ -2167,6 +2688,29 @@ fn toggle_pin(state: &State, store: Option<&Store>) {
 }
 
 fn delete_selected(state: &State, store: Option<&Store>) {
+    if state.source.get() == Source::Todos {
+        let Some(todo) = selected_todo(state) else {
+            return;
+        };
+        let Some(store) = store else { return };
+        let previous_rows = state.rows.get();
+        if let Err(e) = store.delete_todo(todo.id) {
+            log::error!("delete todo {}: {e}", todo.id);
+            return;
+        }
+        crate::history::bump();
+        reload(state, store);
+        let rows = state.rows.get();
+        let (next, jump_to_top) = selection_after_delete(&previous_rows, &rows, todo.id);
+        state.selected.set(next);
+        if jump_to_top {
+            if let Some(id) = next {
+                reveal_row(id);
+            }
+        }
+        flash(state, t!("flash.deleted"));
+        return;
+    }
     if state.source.get() == Source::Snippets {
         let Some(snippet) = selected_snippet(state) else {
             return;
@@ -2252,10 +2796,10 @@ fn header_inner(state: State) -> impl IntoElement {
         .child(dynamic({
             let state = state.clone();
             move || {
-                if state.source.get() == Source::Snippets {
-                    view().into_element()
-                } else {
+                if state.source.get() == Source::History {
                     filter_bar(state.clone()).into_element()
+                } else {
+                    view().into_element()
                 }
             }
         }))
@@ -2287,7 +2831,11 @@ fn search_box(state: State) -> impl IntoElement {
                 .value(query)
                 .on_change(move |value: &str| query.set(value.to_string()))
                 .auto_correct(false)
-                .placeholder(move || if state.source.get() == Source::Snippets { t!("panel.search_snippets") } else { t!("panel.search") })
+                .placeholder(move || match state.source.get() {
+                    Source::History => t!("panel.search"),
+                    Source::Snippets => t!("panel.search_snippets"),
+                    Source::Todos => t!("panel.search_todos"),
+                })
                 .placeholder_color(rgb(0x8A8178))
                 .text_color(theme::fg())
                 .text_size(px(14.0))
@@ -2357,6 +2905,32 @@ enum RowKey {
     Section(String),
     Clip(i64),
     Snippet(i64),
+    Todo(i64),
+}
+
+/// 待办的新增框：只在待办来源里出现；回车添加后留在原地，方便连续录入。
+fn todo_add_input(state: State) -> impl IntoElement {
+    let draft = state.todo_draft;
+    let focused = state.todo_add_focused;
+    let input_ref = state.todo_input;
+    view().px_3().pt_3().pb_1().child(
+        input()
+            .test_id("todo-draft")
+            .element_ref(&input_ref)
+            .value(draft)
+            .auto_correct(false)
+            .on_change(move |value: &str| draft.set(value.to_string()))
+            .on_focus(move || focused.set(true))
+            .on_blur(move || focused.set(false))
+            .placeholder(t!("todo.add_placeholder"))
+            .text_size(px(13.0))
+            .px_3()
+            .py_2()
+            .rounded(px(8.0))
+            .bg(theme::glass_card())
+            .border_1()
+            .border_color(theme::border()),
+    )
 }
 
 fn sidebar(state: State) -> impl IntoElement {
@@ -2364,12 +2938,20 @@ fn sidebar(state: State) -> impl IntoElement {
     let selected = state.selected;
     let scroll_ref = element_ref();
     SIDEBAR.with(|slot| *slot.borrow_mut() = Some(scroll_ref));
+    let add_state = state.clone();
     view()
         .w(px(theme::SIDEBAR_WIDTH))
         .flex_col()
         .bg(theme::glass_surface())
         .border_r(px(1.0))
         .border_r_color(theme::border())
+        .child(dynamic(move || {
+            if add_state.source.get() == Source::Todos {
+                todo_add_input(add_state.clone()).into_element()
+            } else {
+                view().into_element()
+            }
+        }))
         .child(
             scroll().element_ref(&scroll_ref).flex_1().child(
                 view().flex_col().py_2().child(each(
@@ -2378,6 +2960,7 @@ fn sidebar(state: State) -> impl IntoElement {
                         Row::Section(label) => RowKey::Section(label.clone()),
                         Row::Clip(clip) => RowKey::Clip(clip.id),
                         Row::Snippet(snippet) => RowKey::Snippet(snippet.id),
+                        Row::Todo(todo) => RowKey::Todo(todo.id),
                     },
                     move |row, _index| match row.get() {
                         Row::Section(label) => view().px_4().pt_4().pb_2().child(
@@ -2559,6 +3142,83 @@ fn sidebar(state: State) -> impl IntoElement {
                                         ),
                                 )
                         }
+                        Row::Todo(todo) => {
+                            let id = todo.id;
+                            let done = todo.done;
+                            let title = preview_for_text(&todo.title);
+                            let line_count = todo.title.lines().count();
+                            let row_state = state.clone();
+                            let menu_state = state.clone();
+                            view()
+                                .element_ref(&row_ref(id))
+                                .flex_row()
+                                .items_center()
+                                .gap_3()
+                                .mx_2()
+                                .px_2()
+                                .py_2()
+                                .rounded(px(8.0))
+                                .bg(move || {
+                                    if selected.get() == Some(id) {
+                                        theme::glass_accent()
+                                    } else {
+                                        AdaptiveColor::TRANSPARENT
+                                    }
+                                })
+                                .on_press(move |event: &PressEvent| {
+                                    leave_todo_input(&row_state);
+                                    selected.set(Some(id));
+                                    if event.clicks >= 2 {
+                                        if let Some(store) = crate::history::init() {
+                                            toggle_todo(&row_state, Some(store.as_ref()));
+                                        }
+                                    }
+                                })
+                                .on_context_menu(move |_event: &nsh_core::ContextMenuEvent| {
+                                    selected.set(Some(id));
+                                    enter_action_mode(&menu_state, ActionMode::Main);
+                                })
+                                .child(todo_checkbox(done))
+                                .child(
+                                    view()
+                                        .flex_1()
+                                        .flex_row()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(
+                                            text(title)
+                                                .truncate()
+                                                .text_size(px(13.0))
+                                                .text_color(move || {
+                                                    if done {
+                                                        theme::muted_fg()
+                                                    } else if selected.get() == Some(id) {
+                                                        theme::accent_fg()
+                                                    } else {
+                                                        theme::fg()
+                                                    }
+                                                }),
+                                        )
+                                        .child(dynamic(move || {
+                                            if line_count <= 1 {
+                                                return view().into_element();
+                                            }
+                                            view()
+                                                .px_1()
+                                                .py(px(1.0))
+                                                .rounded(px(4.0))
+                                                .bg(theme::glass_card())
+                                                .border_1()
+                                                .border_color(theme::border())
+                                                .child(
+                                                    text(t!("todo.lines", count = line_count))
+                                                        .text_size(px(10.0))
+                                                        .text_color(theme::muted_fg()),
+                                                )
+                                                .into_element()
+                                        })),
+                                )
+                        }
                     },
                 ))),
         )
@@ -2596,6 +3256,35 @@ fn icon_box(clip: &Clip) -> impl IntoElement {
             .text_size(px(12.0))
             .text_color(theme::muted_fg()),
     )
+}
+
+fn todo_checkbox(done: bool) -> impl IntoElement {
+    view()
+        .size(px(16.0))
+        .items_center()
+        .justify_center()
+        .rounded(px(4.0))
+        .border_1()
+        .border_color(if done {
+            theme::primary()
+        } else {
+            theme::border()
+        })
+        .bg(if done {
+            theme::primary()
+        } else {
+            AdaptiveColor::TRANSPARENT
+        })
+        .child(dynamic(move || {
+            if done {
+                text("✓")
+                    .text_size(px(10.0))
+                    .text_color(theme::on_primary())
+                    .into_element()
+            } else {
+                view().into_element()
+            }
+        }))
 }
 
 // ---------------------------------------------------------------- 预览
@@ -2750,7 +3439,10 @@ fn preview_pane(state: State) -> impl IntoElement {
 }
 
 fn preview_content(state: State) -> impl IntoElement {
-    let mut root = view().flex_1().flex_col();
+    let root = view().flex_1().flex_col();
+    if state.source.get() == Source::Todos {
+        return root.child(todo_preview(state.clone()));
+    }
     if state.source.get() == Source::Snippets {
         return root.child(snippet_preview(state.clone()));
     }
@@ -2764,6 +3456,58 @@ fn preview_content(state: State) -> impl IntoElement {
             .child(view().flex_1().p_6().child(preview_body(clip.clone())))
             .child(information(clip)),
     }
+}
+
+fn todo_preview(state: State) -> impl IntoElement {
+    let mut root = view().flex_1().flex_col();
+    match selected_todo(&state) {
+        None => {
+            root = root.items_center().justify_center().child(
+                text(t!("panel.empty_todos"))
+                    .text_size(px(13.0))
+                    .text_color(theme::muted_fg()),
+            );
+        }
+        Some(todo) => {
+            root = root
+                .child(
+                    view().flex_1().p_6().child(
+                        scroll().flex_1().child(
+                            text(todo.title.clone())
+                                .text_size(px(14.0))
+                                .text_color(theme::fg())
+                                .selectable(true),
+                        ),
+                    ),
+                )
+                .child(todo_information(&todo));
+        }
+    }
+    root
+}
+
+fn todo_information(todo: &Todo) -> impl IntoElement {
+    let mut info = view()
+        .flex_col()
+        .gap_3()
+        .px_6()
+        .py_5()
+        .border_t(px(1.0))
+        .border_t_color(theme::border())
+        .child(
+            text(t!("meta.info"))
+                .text_size(px(11.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(theme::muted_fg()),
+        )
+        .child(info_row(
+            t!("meta.created_at"),
+            format_time(todo.created_at),
+        ));
+    if let Some(at) = todo.completed_at {
+        info = info.child(info_row(t!("meta.completed_at"), format_time(at)));
+    }
+    info
 }
 
 fn snippet_preview(state: State) -> impl IntoElement {
@@ -3170,29 +3914,27 @@ fn snippet_icon() -> View {
     ])
 }
 
+/// 底栏的来源图标：待办（方框加勾）。
+fn todo_icon() -> View {
+    view().size(px(14.0)).items_center().justify_center().child(
+        text("☑")
+            .text_size(px(13.0))
+            .text_color(theme::muted_fg()),
+    )
+}
+
 fn footer(state: State) -> impl IntoElement {
     let state = state.clone();
     dynamic(move || footer_inner(state.clone()))
 }
 
 fn footer_inner(state: State) -> impl IntoElement {
-    let snippets = state.source.get() == Source::Snippets;
-    let total = if snippets {
-        state.snippets.get().len()
-    } else {
-        state.clips.get().len()
+    let total = match state.source.get() {
+        Source::History => state.clips.get().len(),
+        Source::Snippets => state.snippets.get().len(),
+        Source::Todos => state.todos.get().len(),
     };
     let visible = visible_ids(&state.rows.get()).len();
-    let label = if snippets {
-        t!("footer.snippets")
-    } else {
-        t!("footer.history")
-    };
-    let count = if visible == total {
-        total.to_string()
-    } else {
-        format!("{visible} / {total}")
-    };
     let mut right = view().flex_row().items_center().gap_4();
     if let Some(message) = state.flash.get() {
         right = right.child(
@@ -3203,6 +3945,19 @@ fn footer_inner(state: State) -> impl IntoElement {
     }
     right = right.child(actions_button(state.clone()));
 
+    let mut left = view()
+        .flex_row()
+        .items_center()
+        .gap_3()
+        .child(source_switcher(state.clone()));
+    if visible != total {
+        left = left.child(
+            text(format!("{visible} / {total}"))
+                .text_size(px(11.0))
+                .text_color(theme::muted_fg()),
+        );
+    }
+
     view()
         .flex_row()
         .items_center()
@@ -3211,19 +3966,41 @@ fn footer_inner(state: State) -> impl IntoElement {
         .py_2()
         .border_t(px(1.0))
         .border_t_color(theme::border())
-        .child({
-            let toggle_state = state.clone();
-            let icon_source = state.source;
+        .child(left)
+        .child(right)
+}
+
+/// 底栏的三个来源：当前段高亮，计数做成下标。
+fn source_switcher(state: State) -> impl IntoElement {
+    let open_todos = state.todos.get().iter().filter(|todo| !todo.done).count();
+    let entries = [
+        (
+            Source::History,
+            "source-history",
+            t!("source.history"),
+            state.clips.get().len(),
+        ),
+        (
+            Source::Snippets,
+            "source-snippets",
+            t!("source.snippets"),
+            state.snippets.get().len(),
+        ),
+        (
+            Source::Todos,
+            "source-todos",
+            t!("source.todos"),
+            open_todos,
+        ),
+    ];
+    let mut bar = view().flex_row().items_center().gap(px(2.0));
+    for (source, test_id, label, count) in entries {
+        let segment_state = state.clone();
+        let current = state.source;
+        bar = bar.child(
             view()
-                .test_id("source-toggle")
-                .on_press(move |_event: &PressEvent| {
-                    let next = if toggle_state.source.get() == Source::Snippets {
-                        Source::History
-                    } else {
-                        Source::Snippets
-                    };
-                    switch_source(&toggle_state, next);
-                })
+                .test_id(test_id)
+                .on_press(move |_event: &PressEvent| switch_source(&segment_state, source))
                 .cursor_pointer()
                 .flex_row()
                 .items_center()
@@ -3231,41 +4008,42 @@ fn footer_inner(state: State) -> impl IntoElement {
                 .px_2()
                 .py_1()
                 .rounded(px(6.0))
-                .child(dynamic(move || {
-                    if icon_source.get() == Source::Snippets {
-                        snippet_icon().into_element()
+                .bg(move || {
+                    if current.get() == source {
+                        theme::glass_accent()
                     } else {
-                        clipboard_icon().into_element()
+                        AdaptiveColor::TRANSPARENT
                     }
+                })
+                .child(dynamic(move || match source {
+                    Source::History => clipboard_icon().into_element(),
+                    Source::Snippets => snippet_icon().into_element(),
+                    Source::Todos => todo_icon().into_element(),
                 }))
-                // 标签与计数挨在一起，计数做成下标，像脚注标记。
                 .child(
-                    view()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(2.0))
-                        .child(
-                            text(label)
-                                .text_size(px(12.0))
-                                .text_color(theme::muted_fg()),
-                        )
-                        .child(view().translate_y(px(2.5)).child(
-                            text(count)
-                                .text_size(px(8.0))
-                                .text_color(theme::muted_fg()),
-                        )),
+                    text(label)
+                        .text_size(px(12.0))
+                        .text_color(move || {
+                            if current.get() == source {
+                                theme::accent_fg()
+                            } else {
+                                theme::muted_fg()
+                            }
+                        }),
                 )
-                .child(
-                    text("⇄")
-                        .text_size(px(11.0))
+                .child(view().translate_y(px(2.5)).child(
+                    text(count.to_string())
+                        .text_size(px(8.0))
                         .text_color(theme::muted_fg()),
-                )
-        })
-        .child(right)
+                )),
+        );
+    }
+    bar
 }
 
 fn actions_button(state: State) -> impl IntoElement {
     view()
+        .test_id("actions-button")
         .on_press(move || {
             if state.actions_open.get() {
                 close_actions(&state);

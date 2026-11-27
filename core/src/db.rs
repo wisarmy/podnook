@@ -13,7 +13,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::{
     hash_bytes, hash_text, kind_for_text, preview_for_text, truncate_text, Clip, ClipKind, NewClip,
-    Snippet, Snapshot, IMAGE_LIMIT, RETENTION_COUNT, RETENTION_DAYS, SETTING_IGNORED_BUNDLES,
+    Snippet, Snapshot, Todo, IMAGE_LIMIT, RETENTION_COUNT, RETENTION_DAYS, SETTING_IGNORED_BUNDLES,
     SETTING_RETENTION_COUNT, SETTING_RETENTION_DAYS, TEXT_LIMIT,
 };
 
@@ -61,6 +61,15 @@ CREATE TABLE IF NOT EXISTS snippets (
   last_used_at INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS snippets_used ON snippets(last_used_at DESC, created_at DESC);
+CREATE TABLE IF NOT EXISTS todos (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  title        TEXT    NOT NULL,
+  done         INTEGER NOT NULL DEFAULT 0,
+  sort_order   INTEGER NOT NULL DEFAULT 0,
+  created_at   INTEGER NOT NULL,
+  completed_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS todos_order ON todos(done, sort_order DESC);
 "#;
 
 /// 写入结果：新条目，还是把已有条目置顶。
@@ -690,6 +699,124 @@ impl Store {
         )?;
         Ok(())
     }
+
+    /// 待办：未完成在前（手动顺序），已完成沉底（最近完成的在前）。
+    pub fn list_todos(&self) -> rusqlite::Result<Vec<Todo>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, title, done, sort_order, created_at, completed_at
+               FROM todos
+              ORDER BY done ASC,
+                       CASE WHEN done = 0 THEN sort_order ELSE COALESCE(completed_at, 0) END DESC,
+                       id DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(Todo {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                done: row.get::<_, i64>(2)? != 0,
+                sort_order: row.get(3)?,
+                created_at: row.get(4)?,
+                completed_at: row.get(5)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// 新待办放到未完成区顶部。
+    pub fn create_todo(&self, title: &str, now: i64) -> rusqlite::Result<i64> {
+        let conn = self.lock();
+        conn.execute(
+            "INSERT INTO todos (title, done, sort_order, created_at)
+             VALUES (?1, 0,
+                     (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM todos WHERE done = 0),
+                     ?2)",
+            params![title, now],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn rename_todo(&self, id: i64, title: &str) -> rusqlite::Result<()> {
+        let conn = self.lock();
+        conn.execute(
+            "UPDATE todos SET title = ?1 WHERE id = ?2",
+            params![title, id],
+        )?;
+        Ok(())
+    }
+
+    /// 勾选/取消勾选；取消完成时放回未完成区顶部。
+    pub fn set_todo_done(&self, id: i64, done: bool, now: i64) -> rusqlite::Result<()> {
+        let conn = self.lock();
+        if done {
+            conn.execute(
+                "UPDATE todos SET done = 1, completed_at = ?1 WHERE id = ?2",
+                params![now, id],
+            )?;
+        } else {
+            // 完成过的条目保留旧 sort_order，可能和新条目重复；放回顶部更稳定。
+            conn.execute(
+                "UPDATE todos
+                    SET done = 0,
+                        completed_at = NULL,
+                        sort_order = (SELECT COALESCE(MAX(sort_order), 0) + 1
+                                        FROM todos WHERE done = 0)
+                  WHERE id = ?1",
+                params![id],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// 在未完成区里上移/下移一位；已经在边界时返回 `false`。
+    pub fn move_todo(&self, id: i64, up: bool) -> rusqlite::Result<bool> {
+        let conn = self.lock();
+        let rows: Vec<(i64, i64)> = {
+            let mut stmt = conn.prepare(
+                "SELECT id, sort_order FROM todos
+                  WHERE done = 0
+                  ORDER BY sort_order DESC, id DESC",
+            )?;
+            let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        let Some(index) = rows.iter().position(|(row_id, _)| *row_id == id) else {
+            return Ok(false);
+        };
+        let target = if up {
+            index.checked_sub(1)
+        } else {
+            (index + 1 < rows.len()).then_some(index + 1)
+        };
+        let Some(target) = target else {
+            return Ok(false);
+        };
+        conn.execute(
+            "UPDATE todos SET sort_order = ?1 WHERE id = ?2",
+            params![rows[target].1, rows[index].0],
+        )?;
+        conn.execute(
+            "UPDATE todos SET sort_order = ?1 WHERE id = ?2",
+            params![rows[index].1, rows[target].0],
+        )?;
+        Ok(true)
+    }
+
+    pub fn delete_todo(&self, id: i64) -> rusqlite::Result<()> {
+        let conn = self.lock();
+        conn.execute("DELETE FROM todos WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn delete_completed_todos(&self) -> rusqlite::Result<usize> {
+        let conn = self.lock();
+        conn.execute("DELETE FROM todos WHERE done = 1", [])
+    }
+
+    pub fn clear_todos(&self) -> rusqlite::Result<usize> {
+        let conn = self.lock();
+        conn.execute("DELETE FROM todos", [])
+    }
 }
 
 #[cfg(test)]
@@ -1101,5 +1228,147 @@ mod format_tests {
         let clip = store.list(1).unwrap().remove(0);
         store.delete(clip.id).unwrap();
         assert!(store.formats_for(clip.id).unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod todo_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn store() -> Store {
+        let dir = std::env::temp_dir().join(format!(
+            "podnook-todos-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        Store::open_in_memory(dir).unwrap()
+    }
+
+    fn ids(store: &Store) -> Vec<i64> {
+        store
+            .list_todos()
+            .unwrap()
+            .into_iter()
+            .map(|todo| todo.id)
+            .collect()
+    }
+
+    #[test]
+    fn new_todos_go_on_top_and_completed_sink() {
+        let store = store();
+        let a = store.create_todo("a", 10).unwrap();
+        let b = store.create_todo("b", 20).unwrap();
+        assert_eq!(ids(&store), vec![b, a]);
+
+        store.set_todo_done(a, true, 30).unwrap();
+        let list = store.list_todos().unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].id, b);
+        assert_eq!(list[0].title, "b");
+        assert!(list[1].done);
+        assert_eq!(list[1].completed_at, Some(30));
+
+        store.set_todo_done(b, true, 40).unwrap();
+        // 最近完成的排在已完成区最前。
+        assert_eq!(ids(&store), vec![b, a]);
+    }
+
+    #[test]
+    fn undoing_completion_returns_to_the_top() {
+        let store = store();
+        let a = store.create_todo("a", 1).unwrap();
+        let b = store.create_todo("b", 2).unwrap();
+        store.set_todo_done(a, true, 3).unwrap();
+        store.set_todo_done(a, false, 4).unwrap();
+
+        let list = store.list_todos().unwrap();
+        assert_eq!(list[0].id, a);
+        assert!(!list[0].done);
+        assert_eq!(list[0].completed_at, None);
+        assert_eq!(list[1].id, b);
+    }
+
+    #[test]
+    fn reorders_open_todos_without_moving_completed_ones() {
+        let store = store();
+        let a = store.create_todo("a", 1).unwrap();
+        let b = store.create_todo("b", 2).unwrap();
+        let c = store.create_todo("c", 3).unwrap();
+        assert_eq!(ids(&store), vec![c, b, a]);
+
+        assert!(store.move_todo(b, true).unwrap());
+        assert_eq!(ids(&store), vec![b, c, a]);
+        assert!(store.move_todo(b, false).unwrap());
+        assert_eq!(ids(&store), vec![c, b, a]);
+        assert!(!store.move_todo(c, true).unwrap());
+        assert!(!store.move_todo(a, false).unwrap());
+
+        store.set_todo_done(a, true, 4).unwrap();
+        // 已完成的条目不参与移动。
+        assert!(!store.move_todo(a, true).unwrap());
+        assert_eq!(ids(&store), vec![c, b, a]);
+    }
+
+    #[test]
+    fn renames_and_deletes_todos() {
+        let store = store();
+        let a = store.create_todo("first\nsecond", 1).unwrap();
+        assert_eq!(store.list_todos().unwrap()[0].title, "first\nsecond");
+
+        store.rename_todo(a, "renamed").unwrap();
+        assert_eq!(store.list_todos().unwrap()[0].title, "renamed");
+
+        store.delete_todo(a).unwrap();
+        assert!(store.list_todos().unwrap().is_empty());
+    }
+
+    #[test]
+    fn deletes_completed_or_clears_everything() {
+        let store = store();
+        let a = store.create_todo("a", 1).unwrap();
+        let b = store.create_todo("b", 2).unwrap();
+        store.set_todo_done(a, true, 3).unwrap();
+
+        assert_eq!(store.delete_completed_todos().unwrap(), 1);
+        assert_eq!(ids(&store), vec![b]);
+
+        assert_eq!(store.clear_todos().unwrap(), 1);
+        assert!(store.list_todos().unwrap().is_empty());
+    }
+
+    #[test]
+    fn legacy_database_gains_the_todos_table() {
+        let dir = std::env::temp_dir().join(format!(
+            "podnook-todos-legacy-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        {
+            let conn = Connection::open(dir.join("history.db")).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE clips (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   kind TEXT NOT NULL,
+                   content TEXT,
+                   preview TEXT NOT NULL DEFAULT '',
+                   hash TEXT NOT NULL UNIQUE,
+                   created_at INTEGER NOT NULL,
+                   last_copied_at INTEGER NOT NULL,
+                   pinned INTEGER NOT NULL DEFAULT 0
+                 );",
+            )
+            .unwrap();
+        }
+
+        let store = Store::open(&dir).unwrap();
+        assert!(store.list_todos().unwrap().is_empty());
+        let id = store.create_todo("after upgrade", 1).unwrap();
+        assert_eq!(store.list_todos().unwrap()[0].id, id);
     }
 }

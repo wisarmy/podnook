@@ -1,4 +1,4 @@
-//! 剪贴板历史的领域模型、捕获规则与本地数据库。
+//! 剪贴板历史、片段与待办的领域模型、捕获规则与本地数据库。
 //!
 //! 这个 crate 不依赖 NSH / AppKit：可以在普通 `cargo test` 里快速跑完，
 //! 应用层只负责把 `NSPasteboard` 的快照喂进来。
@@ -161,6 +161,18 @@ pub struct Snippet {
     pub created_at: i64,
     pub updated_at: i64,
     pub last_used_at: i64,
+}
+
+/// 待办清单里的一条：一段文本 + 完成状态，不受剪贴板保留期清理。
+#[derive(Debug, Clone, PartialEq)]
+pub struct Todo {
+    pub id: i64,
+    pub title: String,
+    pub done: bool,
+    /// 未完成区里的手动顺序，越大越靠前。
+    pub sort_order: i64,
+    pub created_at: i64,
+    pub completed_at: Option<i64>,
 }
 
 /// 当前 Unix 时间（秒）。

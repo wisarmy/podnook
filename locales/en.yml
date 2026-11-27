@@ -11,6 +11,7 @@ tray:
 source:
   history: "History"
   snippets: "Snippets"
+  todos: "Todos"
 
 kind:
   text: "Text"
@@ -25,11 +26,15 @@ group:
   pinned: "Pinned"
   today: "Today"
   earlier: "Earlier"
+  todo_open: "To do"
+  todo_done: "Done"
 
 panel:
   search: "Search clipboard history…"
   search_snippets: "Search snippets…"
+  search_todos: "Search to-dos…"
   empty_snippets: "No snippets yet. Press ⌘N to create one."
+  empty_todos: "No to-dos yet. Press ⌘N to add one."
   actions: "Actions"
   empty: "Copy something and it will show up here."
   no_actions: "No matching actions"
@@ -65,6 +70,13 @@ action:
   duplicate_snippet: "Duplicate Snippet"
   save_snippet: "Save as snippet…"
   new_snippet: "New snippet…"
+  toggle_todo: "Mark as Done"
+  untoggle_todo: "Mark as Not Done"
+  new_todo: "New To-do"
+  delete_completed: "Delete Completed"
+  clear_todos: "Clear All To-dos…"
+  clear_todos_confirm: "Confirm clearing all to-dos"
+  save_todo: "Save as To-do"
 
 range:
   m5: "5 minutes"
@@ -82,6 +94,7 @@ flash:
   deleted: "Deleted"
   deleted_recent: "Deleted %{count} items from the last %{range} (pinned kept)"
   cleared: "Cleared %{count} items"
+  cleared_todos: "Cleared %{count} to-dos"
   saved_to: "Saved to %{path}"
   save_failed: "Could not save. Check the path and try again."
   cannot_open: "This item cannot be opened"
@@ -101,6 +114,8 @@ meta:
   path: "Path"
   size: "Size"
   copied_at: "Copied at"
+  created_at: "Created at"
+  completed_at: "Completed at"
   unknown: "Unknown"
 
 preview:
@@ -201,6 +216,11 @@ snippet:
   empty: "The snippet cannot be empty"
   failed: "Could not save the snippet"
 
-footer:
-  history: "Clipboard history"
-  snippets: "Snippets"
+todo:
+  title: "To-do"
+  hint: "Enter adds a line; ⌘↵ saves"
+  empty: "The to-do cannot be empty"
+  failed: "Could not save the to-do"
+  lines: "%{count} lines"
+  only_text: "Only text can become a to-do"
+  add_placeholder: "Add a to-do…"

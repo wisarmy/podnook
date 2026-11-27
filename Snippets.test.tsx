@@ -4,11 +4,11 @@ test("switches between history and snippets", async () => {
   const app = await open(".", { width: 1120, height: 630, platform: "macos" });
   await app.wait(300);
 
-  await app.press("id:source-toggle");
+  await app.press("id:source-snippets");
   await app.wait(400);
   expect(app.texts()).not.toContain("All");
 
-  await app.press("id:source-toggle");
+  await app.press("id:source-history");
   await app.wait(400);
   expect(app.texts()).toContain("All");
 });
@@ -32,7 +32,7 @@ test("opens the snippet editor from the actions", async () => {
 // 测试宿主的剪贴板在内存里：用 app.clipboard() 断言写入。
 test("copies a snippet to the clipboard", async () => {
   const app = await open(".", { width: 1120, height: 630, platform: "macos" });
-  await app.press("id:source-toggle");
+  await app.press("id:source-snippets");
   await app.wait(400);
   if (!app.texts().includes("Standup note")) {
     console.log("no seeded snippets; skipping");
@@ -47,7 +47,7 @@ test("copies a snippet to the clipboard", async () => {
 
 test("editing a snippet updates the list", async () => {
   const app = await open(".", { width: 1120, height: 630, platform: "macos" });
-  await app.press("id:source-toggle");
+  await app.press("id:source-snippets");
   await app.wait(400);
   if (!app.texts().includes("Signature")) {
     console.log("no seeded snippets; skipping");
@@ -68,7 +68,7 @@ test("editing a snippet updates the list", async () => {
 test("create a snippet with ⌘N", async () => {
   const app = await open(".", { width: 1120, height: 630, platform: "macos" });
   await app.wait(300);
-  await app.press("id:source-toggle");
+  await app.press("id:source-snippets");
   await app.wait(300);
   await app.keyboard.press("mod+n");
   await app.waitFor("id:snippet-name", { timeout: 5000 });
@@ -80,7 +80,7 @@ test("create a snippet with ⌘N", async () => {
 test("duplicate a snippet with ⌘D", async () => {
   const app = await open(".", { width: 1120, height: 630, platform: "macos" });
   await app.wait(300);
-  await app.press("id:source-toggle");
+  await app.press("id:source-snippets");
   await app.wait(400);
   if (!app.texts().includes("Standup note")) {
     console.log("no seeded snippets; skipping");
@@ -98,7 +98,7 @@ test("duplicate a snippet with ⌘D", async () => {
 test("⌘E edits the selected snippet", async () => {
   const app = await open(".", { width: 1120, height: 630, platform: "macos" });
   await app.wait(300);
-  await app.press("id:source-toggle");
+  await app.press("id:source-snippets");
   await app.wait(300);
   await app.keyboard.press("mod+n");
   await app.waitFor("id:snippet-name", { timeout: 5000 });
@@ -114,7 +114,7 @@ test("⌘E edits the selected snippet", async () => {
 test("typing { opens the placeholder menu", async () => {
   const app = await open(".", { width: 1120, height: 630, platform: "macos" });
   await app.wait(300);
-  await app.press("id:source-toggle");
+  await app.press("id:source-snippets");
   await app.wait(300);
   await app.keyboard.press("mod+n");
   await app.waitFor("id:snippet-name", { timeout: 5000 });
@@ -135,13 +135,17 @@ test("typing { opens the placeholder menu", async () => {
 test("shift+tab cycles the sources", async () => {
   const app = await open(".", { width: 1120, height: 630, platform: "macos" });
   await app.wait(300);
-  expect(app.texts()).toContain("Clipboard history");
+  expect(app.texts()).toContain("All");
 
   await app.keyboard.press("shift+tab");
   await app.wait(400);
-  expect(app.texts()).toContain("Snippets");
+  expect(app.texts()).not.toContain("All");
 
   await app.keyboard.press("shift+tab");
   await app.wait(400);
-  expect(app.texts()).toContain("Clipboard history");
+  expect(app.texts()).not.toContain("All");
+
+  await app.keyboard.press("shift+tab");
+  await app.wait(400);
+  expect(app.texts()).toContain("All");
 });
