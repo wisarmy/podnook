@@ -152,8 +152,8 @@ bundle id changes, or you switch machines (`tccutil reset Accessibility com.podn
   `⌘E` edit, `⇧⌘P` pin, `⌥⇧⌘S` save as file, `⌘P` cycle type filter, `⌃X`
   delete, `⇧⌘X` delete recent…, `⌃⇧X` clear all, `⌘O` open link/file, `⇧⌘O`
   reveal in Finder, `⌘,` settings, `Esc` close. `⇧Tab`, `⌘1`, `⌘2` and `⌘3`
-  switch between the history, the snippets and the to-dos (or click a segment in
-  the bottom-left switcher). In the history `⌘S` saves the
+  switch between the history, the snippets and the to-dos (or click the source
+  button in the bottom-left corner to cycle). In the history `⌘S` saves the
   selected clip as a snippet; in the snippets `⌘N` creates one, `⌘D`
   duplicates it and `⇧⌘P` pins it; in the to-dos `↵` checks an item off, `⌘↵`
   copies it, `⌘N` opens the Markdown editor, and `⌥↑`/`⌥↓` moves it. `⌘T` saves the
@@ -223,7 +223,7 @@ make install   # 打包 → 用固定身份重签 → 校验 → 安装到 /Appl
 历史与片段里的快捷键：`↵` 粘贴、`⌘↵` 仅复制、`⌘K` 操作面板、`⌘E` 编辑内容、`⇧⌘P` 固定、
 `⌥⇧⌘S` 保存为文件、`⌘P` 切换类型筛选、`⌃X` 删除、`⇧⌘X` 删除最近…、
 `⌃⇧X` 清空全部、`⌘O` 打开链接/文件、`⇧⌘O` 在 Finder 中显示、`⌘,` 设置、`Esc` 收起。
-`⇧Tab`、`⌘1`、`⌘2`、`⌘3` 都能切换历史、片段与待办，也可以点左下角的分段切换条；历史里 `⌘S` 把选中条目存成片段，片段里 `⌘N` 新建、`⌘D` 复制一份、`⇧⌘P` 置顶，待办里 `↵` 勾选、`⌘↵` 复制、`⌘N` 新建并编辑、`⌥↑`/`⌥↓` 调整顺序，`⌘T` 把选中的条目存为待办。
+`⇧Tab`、`⌘1`、`⌘2`、`⌘3` 都能切换历史、片段与待办，也可以点左下角的来源按钮循环切换；历史里 `⌘S` 把选中条目存成片段，片段里 `⌘N` 新建、`⌘D` 复制一份、`⇧⌘P` 置顶，待办里 `↵` 勾选、`⌘↵` 复制、`⌘N` 新建并编辑、`⌥↑`/`⌥↓` 调整顺序，`⌘T` 把选中的条目存为待办。
 片段支持 `{date}`、`{time}`、`{datetime}`、`{weekday}`，以及自定义格式
 `{date format="yyyy-MM-dd"}`；在正文里输入 `{` 会弹出占位符菜单。片段按 Markdown 写，
 `↵` 粘成富文本，`⇧↵` 粘源码。待办正文同样按 Markdown 写，可以直接粘贴图片，列表显示第一行。

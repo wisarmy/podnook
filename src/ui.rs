@@ -4045,6 +4045,11 @@ fn footer_inner(state: State) -> impl IntoElement {
         Source::Todos => state.todos.get().len(),
     };
     let visible = visible_ids(&state.rows.get()).len();
+    let count = if visible == total {
+        total.to_string()
+    } else {
+        format!("{visible} / {total}")
+    };
     let mut right = view().flex_row().items_center().gap_4();
     if let Some(message) = state.flash.get() {
         right = right.child(
@@ -4055,19 +4060,6 @@ fn footer_inner(state: State) -> impl IntoElement {
     }
     right = right.child(actions_button(state.clone()));
 
-    let mut left = view()
-        .flex_row()
-        .items_center()
-        .gap_3()
-        .child(source_switcher(state.clone()));
-    if visible != total {
-        left = left.child(
-            text(format!("{visible} / {total}"))
-                .text_size(px(11.0))
-                .text_color(theme::muted_fg()),
-        );
-    }
-
     view()
         .flex_row()
         .items_center()
@@ -4076,79 +4068,51 @@ fn footer_inner(state: State) -> impl IntoElement {
         .py_2()
         .border_t(px(1.0))
         .border_t_color(theme::border())
-        .child(left)
+        .child(source_toggle(state.clone(), count))
         .child(right)
 }
 
-/// 底栏的三个来源：当前段高亮，计数做成下标。
-fn source_switcher(state: State) -> impl IntoElement {
-    let open_todos = state.todos.get().iter().filter(|todo| !todo.done).count();
-    let entries = [
-        (
-            Source::History,
-            "source-history",
-            t!("source.history"),
-            state.clips.get().len(),
-        ),
-        (
-            Source::Snippets,
-            "source-snippets",
-            t!("source.snippets"),
-            state.snippets.get().len(),
-        ),
-        (
-            Source::Todos,
-            "source-todos",
-            t!("source.todos"),
-            open_todos,
-        ),
-    ];
-    let mut bar = view().flex_row().items_center().gap(px(2.0));
-    for (source, test_id, label, count) in entries {
-        let segment_state = state.clone();
-        let current = state.source;
-        bar = bar.child(
+/// 底栏唯一的来源按钮：图标 + 当前来源 + 计数，点击循环切换。
+fn source_toggle(state: State, count: String) -> impl IntoElement {
+    let next_state = state.clone();
+    let label = match state.source.get() {
+        Source::History => t!("source.history"),
+        Source::Snippets => t!("source.snippets"),
+        Source::Todos => t!("source.todos"),
+    };
+    view()
+        .test_id("source-toggle")
+        .on_press(move |_event: &PressEvent| {
+            switch_source(&next_state, next_source(next_state.source.get()))
+        })
+        .cursor_pointer()
+        .flex_row()
+        .items_center()
+        .gap_2()
+        .px_2()
+        .py_1()
+        .rounded(px(6.0))
+        .child(match state.source.get() {
+            Source::History => clipboard_icon().into_element(),
+            Source::Snippets => snippet_icon().into_element(),
+            Source::Todos => todo_icon().into_element(),
+        })
+        .child(
             view()
-                .test_id(test_id)
-                .on_press(move |_event: &PressEvent| switch_source(&segment_state, source))
-                .cursor_pointer()
                 .flex_row()
                 .items_center()
-                .gap_2()
-                .px_2()
-                .py_1()
-                .rounded(px(6.0))
-                .bg(move || {
-                    if current.get() == source {
-                        theme::glass_accent()
-                    } else {
-                        AdaptiveColor::TRANSPARENT
-                    }
-                })
-                .child(dynamic(move || match source {
-                    Source::History => clipboard_icon().into_element(),
-                    Source::Snippets => snippet_icon().into_element(),
-                    Source::Todos => todo_icon().into_element(),
-                }))
+                .gap(px(2.0))
                 .child(
                     text(label)
                         .text_size(px(12.0))
-                        .text_color(move || {
-                            if current.get() == source {
-                                theme::accent_fg()
-                            } else {
-                                theme::muted_fg()
-                            }
-                        }),
+                        .text_color(theme::muted_fg()),
                 )
                 .child(view().translate_y(px(2.5)).child(
-                    text(count.to_string())
-                        .text_size(px(8.0))
+                    text(count)
+                        .text_size(px(9.0))
                         .text_color(theme::muted_fg()),
                 )),
-        );
-    }
-    bar
+        )
 }
 
 fn actions_button(state: State) -> impl IntoElement {

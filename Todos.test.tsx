@@ -8,7 +8,7 @@ test("shows the to-do actions", async () => {
   const app = await open(".", { width: 980, height: 640, platform: "macos" });
   await app.wait(300);
 
-  await app.press("id:source-todos");
+  await app.keyboard.press("mod+3");
   await app.wait(400);
   // 待办来源没有类型筛选条；历史里才有 All / 全部。
   expect(app.texts()).not.toContain("All");
@@ -28,7 +28,7 @@ test("adds a to-do and checks it off with Enter", async () => {
   const app = await open(".", { width: 980, height: 640, platform: "macos" });
   await app.wait(300);
 
-  await app.press("id:source-todos");
+  await app.keyboard.press("mod+3");
   await app.wait(400);
 
   const title = `Buy milk ${Date.now()}`;

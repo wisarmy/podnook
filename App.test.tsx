@@ -7,7 +7,6 @@ test("shows the clipboard history shell in English", async () => {
   const app = await open(".", { width: 980, height: 640, platform: "macos" });
   expect(app.texts()).toContain("All");
   expect(app.texts()).toContain("History");
-  expect(app.texts()).toContain("Todos");
   expect(app.texts()).toContain("0");
   expect(app.texts()).toContain("Copy something and it will show up here.");
 });
@@ -21,7 +20,6 @@ test("follows a Chinese system language", async () => {
   });
   expect(app.texts()).toContain("全部");
   expect(app.texts()).toContain("历史");
-  expect(app.texts()).toContain("待办");
   expect(app.texts()).toContain("0");
   expect(app.texts()).toContain("复制点什么，就会出现在这里");
 });
