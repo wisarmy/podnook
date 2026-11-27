@@ -640,6 +640,21 @@ fn start_todo_editor(state: &State, todo: Option<Todo>) {
 }
 
 fn cancel_todo_editor(state: &State) {
+    if let Some(store) = crate::history::init() {
+        let original = state
+            .todo_form_id
+            .get()
+            .and_then(|id| {
+                store
+                    .list_todos()
+                    .ok()?
+                    .into_iter()
+                    .find(|todo| todo.id == id)
+            })
+            .map(|todo| todo.title)
+            .unwrap_or_default();
+        cleanup_todo_images(store.as_ref(), &state.edit_content.get(), &original);
+    }
     state.todo_form.set(false);
 }
 
